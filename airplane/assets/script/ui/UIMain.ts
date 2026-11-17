@@ -39,16 +39,15 @@ const { ccclass, property } = _decorator;
  *   permanently disables absolute mapping; it retries on the next touch
  *   until it succeeds, and a mapped point is sanity-checked (finite and
  *   within a sane range) before it is used.
- * - Menu version label (GameManager): the menu shows the build version
- *   ("星空战机 v1.0.1") so the user can tell at a glance which build is
- *   running — the a0dde3b2 build had no such label, so "还是不行" could
- *   not be tied to a build.
- * - SECOND touch channel, stuck-state retry, bomb-tap guard, and the
- *   trial diagnostics are unchanged (see below).
- * - Diagnostics (trial only, remove before review submission): the game
- *   page shows a small line with the last touch world position, the plane
- *   position and the drag mode (see GameManager.setDebugInfo); the menu
- *   shows the bundle state (loading/ready/failed).
+ * - Menu version label (GameManager): REMOVED in v1.0.5 (review
+ *   candidate) — the menu used to show the build version
+ *   ("星空战机 v1.0.1") so the user could tell at a glance which build
+ *   was running.
+ * - SECOND touch channel, stuck-state retry, bomb-tap guard.
+ * - Diagnostics (trial only): REMOVED in v1.0.5 — the game page used to
+ *   show a small line with the last touch world position, the plane
+ *   position and the drag mode; the menu showed the bundle state
+ *   (loading/ready/failed).
  */
 
 const PLANE_MIN_X = -24;
@@ -84,7 +83,6 @@ export class UIMain extends Component {
     // permanently falling back to delta drag.
     private _absChecked = false;
     private _absOk = false;
-    private _absFailReason = '';
     private _lastMoveKey = '';
 
     start () {
@@ -241,7 +239,6 @@ export class UIMain extends Component {
                 // started (e.g. the "heavy" bundle failed to load). A tap
                 // retries the start instead of doing nothing forever.
                 this.gameManager.gameStart();
-                this.gameManager.setDebugInfo('点屏幕重试：资源加载中…');
             }
             return;
         }
@@ -275,11 +272,6 @@ export class UIMain extends Component {
         const world = this._worldFromTouch(touch);
         if (world) {
             this._setPlanePos(world.x, world.z);
-            const p = this.playerPlane.position;
-            this.gameManager.setDebugInfo(
-                '触 ' + world.x.toFixed(0) + ',' + world.z.toFixed(0)
-                + ' 飞机 ' + p.x.toFixed(0) + ',' + p.z.toFixed(0) + ' 绝对',
-            );
             return;
         }
         // Fallback: the old delta drag (kept working even when the camera
@@ -289,10 +281,6 @@ export class UIMain extends Component {
         this._setPlanePos(
             pos.x + 0.01 * this.planeSpeed * delta.x,
             pos.z - 0.01 * this.planeSpeed * delta.y,
-        );
-        this.gameManager.setDebugInfo(
-            '增量 ' + delta.x.toFixed(0) + ',' + delta.y.toFixed(0)
-            + ' 绝对不可用(' + this._absFailReason + ')',
         );
     }
 
@@ -312,7 +300,6 @@ export class UIMain extends Component {
      */
     private _worldFromTouch(touch: Touch): Vec3 | null {
         if (!this._mainCamera) {
-            this._absFailReason = '无相机';
             return null;
         }
         if (!this._absChecked) {
@@ -329,7 +316,6 @@ export class UIMain extends Component {
             // calibration so the next touch retries.
             this._absChecked = false;
             this._absOk = false;
-            this._absFailReason = '实测点异常';
             return null;
         }
         return world;
@@ -373,9 +359,7 @@ export class UIMain extends Component {
      */
     private _calibrateAbsolute(): void {
         this._absOk = false;
-        this._absFailReason = '';
         if (!this._mainCamera) {
-            this._absFailReason = '无相机';
             return;
         }
         try {
@@ -391,19 +375,16 @@ export class UIMain extends Component {
             const w = (rc && rc.width) || 0;
             const h = (rc && rc.height) || 0;
             if (!w || !h) {
-                this._absFailReason = '相机尺寸为0';
                 return;
             }
             const bl = this._screenToGround(0, 0);
             const tr = this._screenToGround(w, h);
             if (!bl || !tr) {
-                this._absFailReason = '映射返回空';
                 return;
             }
             const spanX = Math.abs(tr.x - bl.x);
             const spanZ = Math.abs(tr.z - bl.z);
             if (!isFinite(spanX) || !isFinite(spanZ) || spanX < 1 || spanZ < 1) {
-                this._absFailReason = '跨度异常';
                 return;
             }
             const orthoH = this._mainCamera.orthoHeight;
@@ -414,8 +395,6 @@ export class UIMain extends Component {
                     && spanZ > expectZ * 0.5 && spanZ < expectZ * 2) {
                     this._absOk = true;
                     this._absChecked = true;
-                } else {
-                    this._absFailReason = '跨度与相机不符';
                 }
             } else {
                 // perspective camera: accept any finite, sane span
@@ -424,7 +403,6 @@ export class UIMain extends Component {
             }
         } catch (e) {
             this._absOk = false;
-            this._absFailReason = '异常';
         }
     }
 
