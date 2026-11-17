@@ -82,8 +82,25 @@ export class KartConstants {
     public static readonly ITEM_STAR_TIME = 8;
     public static readonly ITEM_STAR_MUL = 1.15;
     public static readonly ITEM_SPIN_TIME = 2;
-    public static readonly ITEM_SHELL_SPEED = 42;
+    /** Shell speeds (spec Projectiles.ts GREEN_SPEED 33 / RED_SPEED 37). */
+    public static readonly ITEM_GREEN_SHELL_SPEED = 33;
+    public static readonly ITEM_RED_SHELL_SPEED = 37;
     public static readonly ITEM_BOX_RESPAWN = 5;
+    /** Seconds the roulette spins before the item can be spent (spec ARM_TIME 1.05). */
+    public static readonly ITEM_ARM_TIME = 1.05;
+    /** Shell lifetime + wall bounces before it fizzles. */
+    public static readonly ITEM_SHELL_LIFE = 8;
+    public static readonly ITEM_SHELL_MAX = 8;
+    /** Banana lifetime + max on track at once (oldest recycled). */
+    public static readonly ITEM_BANANA_LIFE = 30;
+    public static readonly ITEM_BANANA_MAX = 12;
+    /** Spin-out from a star knock-aside (spec Items.ts 1.25). */
+    public static readonly ITEM_STAR_SPIN = 1.25;
+
+    // --- AI rubber band (spec AI.ts AIField: ASSIST_CATCHUP 0.85 / LEASH 0.6) ---
+    /** Peak catch-up accel, m/s^2; leash decel for a clear leader. */
+    public static readonly AI_CATCHUP = 0.85;
+    public static readonly AI_LEASH = 0.6;
 
     // --- race flow (spec: Race.ts COUNTDOWN 4.4, OOB 1.5, STUCK 4.5) ---
     /** Countdown beats: 3, 2, 1, GO — seconds per beat after a 0.4s lead-in. */
