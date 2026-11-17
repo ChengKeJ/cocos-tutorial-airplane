@@ -52,7 +52,7 @@ const SHIELD_SECONDS = 8;
 // Build version, stamped to the console at startup (nothing on screen)
 // so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.6';
+const GAME_VERSION = 'v1.0.7';
 
 @ccclass('GameManager')
 export class GameManager extends Component {
@@ -117,7 +117,7 @@ export class GameManager extends Component {
     private _currShootTime = 0;
     private _isShooting = false;
     private _bulletType = Constant.BulletPropType.BULLET_M;
-    // Weapon level 1-3 (v1.0.6 stacking): picking up the same bullet prop
+    // Weapon level 1-3 (stacking added in the previous release): picking up the same bullet prop
     // type again raises the level; a different type switches at level 1.
     private _weaponLevel = 1;
     private _score = 0;
