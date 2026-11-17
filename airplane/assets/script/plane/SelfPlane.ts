@@ -96,7 +96,7 @@ export class SelfPlane extends Component {
 
     private _onTriggerEnter(event: ITriggerEvent){
         // some trick to fix "trigger vs trigger problem" in physx
-        if(event.otherCollider.material.friction == 100){
+        if(event.otherCollider.material?.friction == 100){
             return;
         }
 
