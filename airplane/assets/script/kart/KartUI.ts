@@ -378,8 +378,8 @@ export class KartUI extends Component {
         this._hudRoot = hud;
         hud.active = false;
 
-        this._posLabel = this._makeLabel(hud, 'posLabel', -300, 590, 44, GOLD, '第 1/8 名');
-        this._lapLabel = this._makeLabel(hud, 'lapLabel', -300, 540, 28, WHITE, '第 1/3 圈');
+        this._posLabel = this._makeLabel(hud, 'posLabel', -230, 590, 44, GOLD, '第 1/8 名');
+        this._lapLabel = this._makeLabel(hud, 'lapLabel', -230, 540, 28, WHITE, '第 1/3 圈');
         this._timeLabel = this._makeLabel(hud, 'timeLabel', 0, 590, 30, WHITE, '0:00.0');
         this._zoneLabel = this._makeLabel(hud, 'zoneLabel', 0, 540, 24, GREY, '');
         this._speedLabel = this._makeLabel(hud, 'speedLabel', 280, -520, 36, WHITE, '0 km/h');
