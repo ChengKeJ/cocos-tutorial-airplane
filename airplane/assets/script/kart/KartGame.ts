@@ -5,8 +5,9 @@
  * centreline, d = lateral offset, heading = yaw vs the tangent, speed).
  * 8 karts (1 player + 7 AI), 3 laps, 32 checkpoints, countdown start,
  * drift + mini-turbo, boost pads, off-road slowdown, respawn, placement.
- * Items (boxes / shells / banana / star) land in milestone 2 — the hooks
- * (itemKind/itemCount/useItem) already exist so the UI stays stable.
+ * Milestone 2: item boxes / shells / banana / star (KartItems) + AI item
+ * use + rubber-banding (KartItemsLogic). The hooks (itemKind/itemCount/
+ * useItem) already exist so the UI stays stable.
  *
  * Scene contract (see build_kart_scene.py): this component lives on the
  * 'kartGame' node; the scene also has 'Main Camera' (3D) and 'Canvas'.
@@ -17,6 +18,8 @@ import { _decorator, Camera, Component, Node, Quat, Vec3, director, find, sys } 
 import { ItemKind, KartConstants, ROSTER } from './KartConstants';
 import { BOOST_PADS, KartTrack, TrackFrame } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
+import { KartItems } from './KartItems';
+import { aiSkillOf, computeRubberBand, hash01 } from './KartItemsLogic';
 const { ccclass, property } = _decorator;
 
 const BEST_TIME_KEY = 'kart_best_time';
@@ -53,6 +56,15 @@ interface KartState {
     aiDriftDir: number;
     itemKind: number;
     itemCount: number;
+    itemArm: number; // > 0 while the roulette is spinning (item not usable)
+    starTime: number; // > 0 while invulnerable (star)
+    starHitT: number; // cooldown between star knock-asides
+    aiSkill: number; // 0.5..1 (spec AI.ts skill formula)
+    aiAggression: number; // 0.5..1, derived from skill
+    aiItemDelay: number; // reaction delay after picking up an item
+    aiHoldT: number; // seconds the current item has been held
+    aiBand: number; // rubber-band target-speed multiplier (AI only)
+    aiAssist: number; // rubber-band longitudinal accel, m/s^2 (AI only)
     wheelSpin: number;
 }
 
@@ -70,6 +82,7 @@ export class KartGame extends Component {
     private _track: KartTrack = null;
     private _karts: KartState[] = [];
     private _player: KartState = null;
+    private _items: KartItems = null;
     private _camera: Node = null;
     private _cameraComp: Camera = null;
     private _camPos = new Vec3();
@@ -125,6 +138,7 @@ export class KartGame extends Component {
             Quat.fromEuler(q, 0, yaw * RAD2DEG, 0);
             model.root.setRotation(q);
             const back = 11 + (i >> 1) * 8 + (i & 1) * 4;
+            const skill = aiSkillOf(stats.handlingMul, hash01(i * 7 + 3));
             const ks: KartState = {
                 model, stats, isPlayer: i === 0,
                 sTotal: -back, d: (i & 1) === 0 ? -3.2 : 3.2, heading: 0, speed: 0,
@@ -135,12 +149,18 @@ export class KartGame extends Component {
                 offroad: false, oobTime: 0, padCooldown: 0,
                 maxSTotal: -back, wrongWayT: 0,
                 aiWobble: i * 1.7, aiDrift: 0, aiDriftDir: 0,
-                itemKind: ItemKind.NONE, itemCount: 0,
+                itemKind: ItemKind.NONE, itemCount: 0, itemArm: 0,
+                starTime: 0, starHitT: 0,
+                aiSkill: skill, aiAggression: 0.5 + skill * 0.5,
+                aiItemDelay: 0, aiHoldT: 0, aiBand: 1, aiAssist: 0,
                 wheelSpin: 0,
             };
             this._karts.push(ks);
             if (i === 0) { this._player = ks; }
         }
+
+        this._items = new KartItems(this._track, this.node);
+        this._items.buildBoxes();
 
         const camNode = find('Main Camera');
         if (camNode) {
@@ -177,11 +197,13 @@ export class KartGame extends Component {
         }
         if (this.state === 'racing') {
             this._raceTime += dt;
+            this._updateRubberBand(dt);
             for (const k of this._karts) {
                 if (k.isPlayer) { this._updatePlayer(k, dt); }
                 else { this._updateAI(k, dt); }
             }
             this._collideKarts();
+            if (this._items) { this._items.update(dt, this._karts, this._raceTime); }
             this._updateVisuals(dt);
             this._updateCamera(dt, false);
             if (this.ui) { this.ui.tickHud(); }
@@ -246,14 +268,39 @@ export class KartGame extends Component {
         director.loadScene('hall');
     }
 
-    /** Item use (milestone 2 fills this in; until then there is no item). */
+    /** Item use (milestone 2: mushroom / shells / banana / star via KartItems). */
     public useItem() {
-        if (this.state !== 'racing' || !this._player) { return; }
-        if (this._player.itemKind === ItemKind.NONE || this._player.itemCount <= 0) { return; }
-        // milestone 2: mushroom / shells / banana / star effects
-        this._player.itemCount--;
-        if (this._player.itemCount <= 0) { this._player.itemKind = ItemKind.NONE; }
-        if (this.ui) { this.ui.tickHud(); }
+        if (this.state !== 'racing' || !this._player || !this._items) { return; }
+        if (this._player.finished) { return; }
+        if (this._items.useItem(this._player, false, this._raceTime)) {
+            if (this.ui) { this.ui.tickHud(); }
+        }
+    }
+
+    /** Rubber band (spec AI.ts AIField.beginFrame) — AI only, never the player. */
+    private _updateRubberBand(dt: number): void {
+        // finished karts are excluded from the reference (they keep circulating
+        // for the results backdrop; measuring against them would pin catch-up
+        // at maximum once the winner crosses the line).
+        let leadDist = -Infinity;
+        for (const k of this._karts) {
+            if (!k.finished && k.sTotal > leadDist) { leadDist = k.sTotal; }
+        }
+        if (leadDist === -Infinity) {
+            for (const k of this._karts) { if (k.sTotal > leadDist) { leadDist = k.sTotal; } }
+        }
+        for (const k of this._karts) {
+            if (k.isPlayer) { continue; }
+            const gapToLead = leadDist - k.sTotal;
+            const gapToPlayer = k.sTotal - this._player.sTotal;
+            const out = computeRubberBand({
+                gapToLead, gapToPlayer,
+                leading: gapToLead < 1,
+                prevBand: k.aiBand, prevAssist: k.aiAssist, dt,
+            });
+            k.aiBand = out.band;
+            k.aiAssist = out.assist;
+        }
     }
 
     private _resetGrid() {
@@ -277,8 +324,11 @@ export class KartGame extends Component {
             k.offroad = false; k.oobTime = 0; k.padCooldown = 0;
             k.maxSTotal = -back; k.wrongWayT = 0;
             k.aiDrift = 0; k.aiDriftDir = 0;
-            k.itemKind = ItemKind.NONE; k.itemCount = 0;
+            k.itemKind = ItemKind.NONE; k.itemCount = 0; k.itemArm = 0;
+            k.starTime = 0; k.starHitT = 0;
+            k.aiItemDelay = 0; k.aiHoldT = 0; k.aiBand = 1; k.aiAssist = 0;
         }
+        if (this._items) { this._items.reset(); }
         this._snapCameraToPlayer();
     }
 
@@ -361,6 +411,12 @@ export class KartGame extends Component {
             k.spinTime -= dt;
             k.speed = Math.max(0, k.speed - 14 * dt);
             k.spinYaw += 12 * dt;
+            if (k.spinTime <= 0) {
+                // spin ends aligned with the road (milestone 1 never spun a
+                // kart, so this reset was dead code until milestone 2)
+                k.spinTime = 0;
+                k.spinYaw = 0;
+            }
             this._moveKart(k, dt);
             return;
         }
@@ -396,6 +452,10 @@ export class KartGame extends Component {
             k.boostTime -= dt;
             target *= k.boostMul;
         }
+        // star: faster while invulnerable (spec STAR_MUL 1.15)
+        if (k.starTime > 0) { target *= KartConstants.ITEM_STAR_MUL; }
+        // rubber band: AI only, never the player (spec AI.ts)
+        if (!isPlayer) { target *= k.aiBand; }
         if (isPlayer && this.brakeHeld) {
             k.speed -= KartConstants.BRAKE_DECEL * dt;
             if (k.speed < -KartConstants.REVERSE_MAX) { k.speed = -KartConstants.REVERSE_MAX; }
@@ -405,6 +465,13 @@ export class KartGame extends Component {
         } else if (k.speed > target) {
             k.speed -= KartConstants.COAST_DECEL * dt;
             if (k.speed < target) { k.speed = target; }
+        }
+        if (!isPlayer && k.aiAssist !== 0) {
+            // catch-up / leash accel, capped so it can never launch a kart
+            k.speed += k.aiAssist * dt;
+            const cap = target * 1.1 + 2;
+            if (k.speed > cap) { k.speed = cap; }
+            if (k.speed < 0) { k.speed = 0; }
         }
         if (k.offroad) { k.speed = Math.max(0, k.speed - KartConstants.OFFROAD_DRAG * dt); }
 
