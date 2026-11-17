@@ -49,10 +49,10 @@ const BEST_KEY = 'starfighter_best';
 const BOMB_MAX = 3;
 const SHIELD_SECONDS = 8;
 
-// Build version, shown on the menu (bottom corner) and in the menu status
-// line, so a playtest report can be tied to a build at a glance. Bump on
+// Build version, stamped to the console at startup (nothing on screen)
+// so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.4';
+const GAME_VERSION = 'v1.0.5';
 
 @ccclass('GameManager')
 export class GameManager extends Component {
@@ -150,11 +150,6 @@ export class GameManager extends Component {
     private _victoryLabel: Label = null;
     private _bannerTime = 0;
     private _toastTime = 0;
-    // trial diagnostics (remove before review submission): menu bundle
-    // state line + in-game touch/plane debug line
-    private _statusLabel: Label = null;
-    private _versionLabel: Label = null;
-    private _debugLabel: Label = null;
 
     // screen shake (Main Camera)
     private _camera: Node = null;
@@ -839,21 +834,6 @@ export class GameManager extends Component {
         }
     }
 
-    /** Bundle state for the menu status line: 'loading' | 'ready' | 'failed'. */
-    public getHeavyState(): string {
-        if (this._heavyFailed) {
-            return 'failed';
-        }
-        return this._heavyReady ? 'ready' : 'loading';
-    }
-
-    /** Trial-only: update the in-game debug line (touch/plane positions). */
-    public setDebugInfo(text: string): void {
-        if (this._debugLabel) {
-            this._debugLabel.string = text;
-        }
-    }
-
     /** True when the touch lands on the bomb button (so a tap there must not also move the plane). */
     public isBombTouch(touch: Touch): boolean {
         if (!this._bombLabel) {
@@ -867,23 +847,6 @@ export class GameManager extends Component {
         const rect = t.getBoundingBoxToWorld();
         return rect.x <= loc.x && loc.x <= rect.x + rect.width
             && rect.y <= loc.y && loc.y <= rect.y + rect.height;
-    }
-
-    private _refreshStatusLabel(){
-        if (!this._statusLabel) {
-            return;
-        }
-        const state = this.getHeavyState();
-        if (state === 'ready') {
-            this._statusLabel.string = GAME_VERSION + ' · 资源：已就绪';
-            this._statusLabel.color = new Color(120, 255, 150, 255);
-        } else if (state === 'failed') {
-            this._statusLabel.string = GAME_VERSION + ' · 资源：加载失败，点屏幕重试';
-            this._statusLabel.color = new Color(255, 90, 90, 255);
-        } else {
-            this._statusLabel.string = GAME_VERSION + ' · 资源：加载中…';
-            this._statusLabel.color = new Color(255, 255, 255, 255);
-        }
     }
 
     private _showBanner(text: string){
@@ -923,7 +886,6 @@ export class GameManager extends Component {
                 this._heavyFailed = true;
                 this._heavyWaiters = [];
                 this._showToast('资源加载失败，请重试');
-                this._refreshStatusLabel();
                 return;
             }
             const jobs: Array<[string, (p: Prefab) => void]> = [
@@ -951,12 +913,10 @@ export class GameManager extends Component {
                             this._heavyFailed = true;
                             this._heavyWaiters = [];
                             this._showToast('资源加载失败，请重试');
-                            this._refreshStatusLabel();
                             return;
                         }
                         this._heavyReady = true;
                         this._heavyFailed = false;
-                        this._refreshStatusLabel();
                         const waiters = this._heavyWaiters;
                         this._heavyWaiters = [];
                         for (const w of waiters) { w(); }
@@ -1013,20 +973,11 @@ export class GameManager extends Component {
         this._bossLabel = this._makeHudLabel('hudBoss', this.gamePage, 0, 560, 24, red);
         this._bossLabel.node.active = false;
 
-        // trial debug line (bottom of the game page)
-        this._debugLabel = this._makeHudLabel('hudDebug', this.gamePage, 0, -620, 20, new Color(200, 200, 200, 255));
-        this._debugLabel.string = '拖动屏幕移动飞机';
-
         // menu best-score label (gameStart page is the Canvas child named 'gameStart')
         this.gameStartPage = find('Canvas/gameStart');
         if (this.gameStartPage) {
             this._bestLabel = this._makeHudLabel('hudBest', this.gameStartPage, 0, -420, 24, gold);
             this._refreshBestLabel();
-            this._statusLabel = this._makeHudLabel('hudStatus', this.gameStartPage, 0, -480, 22, white);
-            this._refreshStatusLabel();
-            // build version (bottom corner of the menu) — trial only
-            this._versionLabel = this._makeHudLabel('hudVersion', this.gameStartPage, 0, -540, 20, new Color(180, 180, 180, 255));
-            this._versionLabel.string = '星空战机 ' + GAME_VERSION;
         }
 
         // victory label on the game-over page
@@ -1034,6 +985,9 @@ export class GameManager extends Component {
         this._victoryLabel.node.active = false;
 
         this._refreshHud();
+
+        // Version stamp (console only — nothing on screen).
+        console.log('[Star Fighter] ' + GAME_VERSION);
 
         // Gameplay prefabs live in the "heavy" subpackage bundle; start
         // loading them now (menu time) so they are ready when play starts.
