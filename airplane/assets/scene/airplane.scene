@@ -2799,58 +2799,25 @@
     "_enabled": true,
     "__prefab": null,
     "playerPlane": null,
-    "bullet01": {
-      "__uuid__": "8546c4f1-5ad0-4412-acf2-414a66a4d368",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bullet02": {
-      "__uuid__": "34535c55-ff15-420d-b7b2-93d1c2994882",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bullet03": {
-      "__uuid__": "da39b6f9-edae-4f8f-9a7c-34b43b597ce6",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bullet04": {
-      "__uuid__": "04c0fb6f-655a-457f-897e-2fbc7995045b",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bullet05": {
-      "__uuid__": "31847a1b-abe1-4196-9a48-7af36ee53283",
-      "__expectedType__": "cc.Prefab"
-    },
+    "bullet01": null,
+    "bullet02": null,
+    "bullet03": null,
+    "bullet04": null,
+    "bullet05": null,
     "shootTime": 0.1,
     "bulletSpeed": 1,
     "bulletRoot": {
       "__id__": 98
     },
-    "enemy01": {
-      "__uuid__": "96a0c966-6337-4c77-af42-e6b5924f60c1",
-      "__expectedType__": "cc.Prefab"
-    },
-    "enemy02": {
-      "__uuid__": "460a19c1-f6a7-4f12-a0c0-533af944f5ee",
-      "__expectedType__": "cc.Prefab"
-    },
+    "enemy01": null,
+    "enemy02": null,
     "createEnemyTime": 1,
     "enemy1Speed": 0.5,
     "enemy2Speed": 0.7,
-    "enemyExplode": {
-      "__uuid__": "cdc690dc-3f58-444c-a776-8dd19d2f982f",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bulletPropM": {
-      "__uuid__": "f88d2816-bd0b-42d6-aaa1-45b2395169ce",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bulletPropH": {
-      "__uuid__": "c6ccf2b2-61d9-4166-a528-99e9a6ba035e",
-      "__expectedType__": "cc.Prefab"
-    },
-    "bulletPropS": {
-      "__uuid__": "0fe48e89-2886-4bff-8da1-efa36f997bef",
-      "__expectedType__": "cc.Prefab"
-    },
+    "enemyExplode": null,
+    "bulletPropM": null,
+    "bulletPropH": null,
+    "bulletPropS": null,
     "bulletPropSpeed": 0.3,
     "gamePage": {
       "__id__": 49
