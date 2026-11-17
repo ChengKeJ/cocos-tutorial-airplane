@@ -517,8 +517,13 @@ export class KartTrack {
         }
         for (let r = 0; r < rings; r++) {
             const a = r * 3, b = (r + 1) * 3;
-            roadIdx.push(a, b, a + 1, a + 1, b, b + 1);
-            roadIdx.push(a + 1, b + 1, a + 2, a + 2, b + 1, b + 2);
+            // NOTE: frame.right = tangent x up points to the kart's LEFT in
+            // this right-handed layout, so the ring order runs right-to-left
+            // as seen from above — the winding below is the one whose
+            // geometric normal points UP (+Y); the opposite order is
+            // backface-culled and the road is invisible (found 2026-11-17).
+            roadIdx.push(a, a + 1, b, a + 1, b + 1, b);
+            roadIdx.push(a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);
         }
         builder.addGeometry(ROAD, roadPos, roadNor, roadUv, roadIdx);
 
@@ -544,8 +549,8 @@ export class KartTrack {
         }
         for (let r = 0; r < rings; r++) {
             const a = r * 4, b = (r + 1) * 4;
-            edgeIdx.push(a, b, a + 1, a + 1, b, b + 1);
-            edgeIdx.push(a + 2, b + 2, a + 3, a + 3, b + 2, b + 3);
+            edgeIdx.push(a, a + 1, b, a + 1, b + 1, b);
+            edgeIdx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);
         }
         builder.addGeometry(EDGE, edgePos, edgeNor, edgeUv, edgeIdx);
 
@@ -582,8 +587,8 @@ export class KartTrack {
             const n = r1 - r0;
             for (let r = 0; r < n; r++) {
                 const a = r * 4, b = (r + 1) * 4;
-                idx.push(a, b, a + 1, a + 1, b, b + 1);
-                idx.push(a + 2, b + 2, a + 3, a + 3, b + 2, b + 3);
+                idx.push(a, a + 1, b, a + 1, b + 1, b);
+                idx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);
             }
             builder.addGeometry(ground, pos, nor, uv, idx);
         };
