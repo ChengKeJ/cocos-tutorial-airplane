@@ -1,8 +1,8 @@
 /**
  * Kart track for the Star Fighter hall kart game （飞车狂飙）.
  *
- * Centreline math is a port of the kart-royale design spec
- * (ChengKeJ/kart-royale, MIT): the same 16-leg curvature schedule,
+ * Centreline math is a port of the Three.js kart design spec
+ * (MIT-licensed reference implementation): the same 16-leg curvature schedule,
  * elevation / half-width / banking keyframes, box-blurred curvature,
  * exact -2PI renormalisation and uniform arc-length resampling.
  * The world built on top of it is OURS: procedural Cocos meshes
@@ -347,6 +347,18 @@ export class KartTrack {
     public readonly ds: number;
     private _cl: CenterlineData;
 
+    /**
+     * Race direction: false = 正赛 (drive +s), true = 逆向 (the same
+     * 1606 m centreline driven the other way). All public queries take
+     * RACE coordinates (s increases in the race direction) and map them
+     * to physical centreline stations internally, so KartGame / KartItems
+     * need no direction branches: the frame's tangent / right / raceLat /
+     * bank are all flipped together (a proper rotation, not a mirror),
+     * so yaw, camera, AI line, drift direction and grid placement all
+     * follow the race direction automatically.
+     */
+    public reversed = false;
+
     constructor() {
         this._cl = buildCenterline();
         this.length = this._cl.length;
@@ -360,10 +372,15 @@ export class KartTrack {
         return s < 0 ? s + l : s;
     }
 
+    /** Race s -> physical station on the centreline (reversed: mirrored). */
+    private _mapS(s: number): number {
+        return this.reversed ? this.wrapS(-s) : this.wrapS(s);
+    }
+
     /** Interpolated frame at arc length s (wraps). Writes into `out`. */
     public sampleAt(s: number, out: TrackFrame): TrackFrame {
         const cl = this._cl;
-        s = this.wrapS(s);
+        s = this._mapS(s);
         const fi = s / cl.ds;
         const i0 = Math.floor(fi) % cl.count;
         const i1 = (i0 + 1) % cl.count;
@@ -389,6 +406,15 @@ export class KartTrack {
         out.bank = cl.bank[i0] * g + cl.bank[i1] * f;
         out.zone = f < 0.5 ? cl.zone[i0] : cl.zone[i1];
         out.raceLat = cl.race[i0] * g + cl.race[i1] * f;
+        if (this.reversed) {
+            // race frame = physical frame rotated half a turn about up:
+            // tangent and right both flip, so the ideal line and the bank
+            // sense flip with them; up, half and zone stay put.
+            out.tangent.set(-out.tangent.x, -out.tangent.y, -out.tangent.z);
+            out.right.set(-out.right.x, -out.right.y, -out.right.z);
+            out.raceLat = -out.raceLat;
+            out.bank = -out.bank;
+        }
         return out;
     }
 
@@ -411,21 +437,36 @@ export class KartTrack {
     /** Curvature at arc length s (for AI braking / drift decisions). */
     public curvatureAt(s: number): number {
         const cl = this._cl;
-        const i = Math.floor(this.wrapS(s) / cl.ds) % cl.count;
-        return cl.curv[i];
+        const i = Math.floor(this._mapS(s) / cl.ds) % cl.count;
+        const k = cl.curv[i];
+        return this.reversed ? -k : k;
     }
 
     public halfAt(s: number): number {
         const cl = this._cl;
-        const i = Math.floor(this.wrapS(s) / cl.ds) % cl.count;
+        const i = Math.floor(this._mapS(s) / cl.ds) % cl.count;
         return cl.half[i];
     }
 
     public zoneNameAt(s: number): string {
-        const t = this.wrapS(s) / this.length;
+        const t = this._mapS(s) / this.length;
         let zi = ZONES.length - 1;
         for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
         return ZONES[zi].name;
+    }
+
+    /**
+     * True if (race s, lateral d) is on a boost pad. The t-range is
+     * looked up on the PHYSICAL station (mirrored in reverse); the
+     * lateral check needs no flip because the pads are lat-symmetric
+     * (pairs at ±lat, plus one centred at 0).
+     */
+    public padBoostAt(s: number, d: number): boolean {
+        const t = this._mapS(s) / this.length;
+        for (const pad of BOOST_PADS) {
+            if (t >= pad.t0 && t <= pad.t1 && Math.abs(d - pad.lat) < pad.hw) { return true; }
+        }
+        return false;
     }
 
     /** Grid slot k (0 = pole): world pos + yaw, behind the start line. */
