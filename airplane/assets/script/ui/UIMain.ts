@@ -19,31 +19,32 @@ const { ccclass, property } = _decorator;
  *   the plane. Movement is clamped to the playfield.
  * - Keyboard (desktop testing): arrows/WASD move, Space = bomb, Enter/Space starts.
  *
- * Drag fix (2026-11-17, user reported 无法拖动操作 on the trial build):
- * - Primary control is now ABSOLUTE: the touch point is mapped onto the
- *   ground plane (y=0) through the Main Camera and the plane is set to
- *   that world X/Z directly, clamped to the playfield — the plane follows
- *   the finger 1:1. Verified against the Cocos 3.8.0 engine source:
- *   Touch.getLocation() is already in device pixels, which is exactly
- *   what Camera.screenToWorld expects; its 3.8 signature is
- *   screenToWorld(out, screenPos) and screenPos.z is a NORMALIZED depth
- *   (0 = near plane, 1 = far plane), so two calls give two points on the
- *   same ray and intersecting that ray with y=0 is exact for both
- *   perspective and orthographic cameras. A one-time calibration maps the
- *   screen corners and checks the span against the camera's orthoHeight;
- *   if the mapping looks wrong (e.g. a units mismatch) absolute mapping
- *   is disabled and the old delta drag is used instead of pinning the
- *   plane to an edge.
- * - SECOND touch channel: the same handlers are registered on the game
- *   page node as well as the global `input` singleton, so dragging works
- *   even if one channel stops delivering on WeChat. Both channels deliver
- *   the same move event; a (touchId, location) key dedupes it so the
- *   plane moves once, not twice.
- * - Stuck-state retry: if the menu is already hidden but the game never
- *   started (e.g. the "heavy" subpackage bundle failed to load), tapping
- *   the screen retries gameStart() instead of doing nothing forever.
- * - The input singleton delivers a single EventTouch argument (its
- *   .touch is the Touch); _extractTouch normalizes both shapes.
+ * Drag fix v2 (2026-11-17, user reported 还是不行 on the trial build):
+ * - ROOT CAUSE FOUND (verified against the Cocos 3.8.0 engine source):
+ *   the a0dde3b2 fix called screenToWorld with the RENDER-scene camera's
+ *   argument order (out, screenPos), but the game calls it on the
+ *   COMPONENT cc.Camera (cocos/misc/camera-component.ts L1055), whose
+ *   signature is screenToWorld(screenPos, out) — the OPPOSITE order.
+ *   The call therefore wrote the result into a throwaway temp Vec3 and
+ *   left `near`/`far` at (0,0,0), so _screenToGround always returned null,
+ *   calibration always failed, and absolute drag NEVER engaged — every
+ *   touch silently fell back to the old delta drag.
+ * - Units (verified from pal/input/minigame/touch-input.ts): on WeChat,
+ *   Touch.getLocation() is already in DEVICE PIXELS, bottom-left origin
+ *   (x = clientX * dpr, y = windowHeight - clientY * dpr). The render
+ *   camera's screenToWorld expects exactly that (ndcY = py/H*2-1, py=H is
+ *   the top of the screen), so getLocation() is fed straight in — no DPR
+ *   scaling, no y-flip. The earlier "units mismatch" suspicion was WRONG.
+ * - Calibration is now RETRYABLE: a failed calibration no longer
+ *   permanently disables absolute mapping; it retries on the next touch
+ *   until it succeeds, and a mapped point is sanity-checked (finite and
+ *   within a sane range) before it is used.
+ * - Menu version label (GameManager): the menu shows the build version
+ *   ("星空战机 v1.0.1") so the user can tell at a glance which build is
+ *   running — the a0dde3b2 build had no such label, so "还是不行" could
+ *   not be tied to a build.
+ * - SECOND touch channel, stuck-state retry, bomb-tap guard, and the
+ *   trial diagnostics are unchanged (see below).
  * - Diagnostics (trial only, remove before review submission): the game
  *   page shows a small line with the last touch world position, the plane
  *   position and the drag mode (see GameManager.setDebugInfo); the menu
@@ -78,8 +79,12 @@ export class UIMain extends Component {
 
     // drag: absolute touch -> ground-plane mapping (Main Camera)
     private _mainCamera: Camera | null = null;
+    // _absChecked is true ONLY once calibration has SUCCEEDED. A failed
+    // calibration leaves it false so the next touch retries instead of
+    // permanently falling back to delta drag.
     private _absChecked = false;
     private _absOk = false;
+    private _absFailReason = '';
     private _lastMoveKey = '';
 
     start () {
@@ -286,22 +291,28 @@ export class UIMain extends Component {
             pos.z - 0.01 * this.planeSpeed * delta.y,
         );
         this.gameManager.setDebugInfo(
-            '增量 ' + delta.x.toFixed(0) + ',' + delta.y.toFixed(0) + ' 绝对不可用',
+            '增量 ' + delta.x.toFixed(0) + ',' + delta.y.toFixed(0)
+            + ' 绝对不可用(' + this._absFailReason + ')',
         );
     }
 
     /**
      * Map a touch onto the ground plane (y=0) the plane flies on.
-     * touch.getLocation() is in device pixels — exactly what
-     * Camera.screenToWorld expects. screenToWorld's z is a normalized
-     * depth (0 = near plane, 1 = far plane), so two calls give two points
-     * on the same ray; intersecting that ray with y=0 is exact for both
-     * perspective and orthographic cameras.
+     * touch.getLocation() is in device pixels, bottom-left origin — exactly
+     * what the render camera's screenToWorld expects (verified from the
+     * 3.8.0 engine source), so it is fed straight in: no DPR scaling,
+     * no y-flip. screenPos.z is a NORMALIZED depth (0 = near plane,
+     * 1 = far plane), so two calls give two points on the same ray;
+     * intersecting that ray with y=0 is exact for both perspective and
+     * orthographic cameras.
      * Returns null when the mapping cannot be trusted (the caller then
-     * falls back to delta drag).
+     * falls back to delta drag). A mapped point is sanity-checked against
+     * a real touch before it is used; garbage re-arms calibration so the
+     * next touch retries instead of silently staying on delta drag.
      */
     private _worldFromTouch(touch: Touch): Vec3 | null {
         if (!this._mainCamera) {
+            this._absFailReason = '无相机';
             return null;
         }
         if (!this._absChecked) {
@@ -311,7 +322,17 @@ export class UIMain extends Component {
             return null;
         }
         const loc = touch.getLocation();
-        return this._screenToGround(loc.x, loc.y);
+        const world = this._screenToGround(loc.x, loc.y);
+        if (!world || !isFinite(world.x) || !isFinite(world.z)
+            || Math.abs(world.x) > 500 || Math.abs(world.z) > 500) {
+            // Mapping produced garbage for a real touch — re-arm
+            // calibration so the next touch retries.
+            this._absChecked = false;
+            this._absOk = false;
+            this._absFailReason = '实测点异常';
+            return null;
+        }
+        return world;
     }
 
     private _screenToGround(px: number, py: number): Vec3 | null {
@@ -320,8 +341,14 @@ export class UIMain extends Component {
         }
         const near = new Vec3();
         const far = new Vec3();
-        this._mainCamera.screenToWorld(near, new Vec3(px, py, 0));
-        this._mainCamera.screenToWorld(far, new Vec3(px, py, 1));
+        // cc.Camera.screenToWorld(screenPos, out) — screenPos FIRST, out
+        // second. (The render-scene camera underneath takes (out,
+        // screenPos); the component swaps the order. Calling it with the
+        // render-scene order writes into a throwaway temp and leaves
+        // near/far at (0,0,0) — that was the a0dde3b2 bug: absolute drag
+        // could never engage.)
+        this._mainCamera.screenToWorld(new Vec3(px, py, 0), near);
+        this._mainCamera.screenToWorld(new Vec3(px, py, 1), far);
         const dx = far.x - near.x;
         const dy = far.y - near.y;
         const dz = far.z - near.z;
@@ -336,34 +363,38 @@ export class UIMain extends Component {
     }
 
     /**
-     * One-time sanity check of the absolute mapping: map the bottom-left
-     * and top-right screen corners onto the ground plane and compare the
-     * span with what the camera's orthoHeight predicts. A units mismatch
-     * (e.g. points fed where pixels were expected) shows up as a span
-     * several times too big or small — in that case absolute mapping is
-     * disabled and delta drag is used instead of pinning the plane to an
-     * edge.
+     * Sanity check of the absolute mapping: map the bottom-left and
+     * top-right screen corners onto the ground plane and compare the span
+     * with what the camera's orthoHeight predicts. RETRYABLE: this only
+     * marks _absChecked on success; on any failure it records the reason
+     * and leaves _absChecked false, so the next touch tries again (an
+     * early failure — e.g. camera width/height still 0 at the first
+     * touch — must not permanently disable absolute mapping).
      */
     private _calibrateAbsolute(): void {
-        this._absChecked = true;
         this._absOk = false;
+        this._absFailReason = '';
         if (!this._mainCamera) {
+            this._absFailReason = '无相机';
             return;
         }
         try {
             const w = this._mainCamera.width;
             const h = this._mainCamera.height;
             if (!w || !h) {
+                this._absFailReason = '相机尺寸为0';
                 return;
             }
             const bl = this._screenToGround(0, 0);
             const tr = this._screenToGround(w, h);
             if (!bl || !tr) {
+                this._absFailReason = '映射返回空';
                 return;
             }
             const spanX = Math.abs(tr.x - bl.x);
             const spanZ = Math.abs(tr.z - bl.z);
             if (!isFinite(spanX) || !isFinite(spanZ) || spanX < 1 || spanZ < 1) {
+                this._absFailReason = '跨度异常';
                 return;
             }
             const orthoH = this._mainCamera.orthoHeight;
@@ -373,13 +404,18 @@ export class UIMain extends Component {
                 if (spanX > expectX * 0.5 && spanX < expectX * 2
                     && spanZ > expectZ * 0.5 && spanZ < expectZ * 2) {
                     this._absOk = true;
+                    this._absChecked = true;
+                } else {
+                    this._absFailReason = '跨度与相机不符';
                 }
             } else {
                 // perspective camera: accept any finite, sane span
                 this._absOk = true;
+                this._absChecked = true;
             }
         } catch (e) {
             this._absOk = false;
+            this._absFailReason = '异常';
         }
     }
 
