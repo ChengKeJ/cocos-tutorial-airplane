@@ -1,0 +1,190 @@
+name: Build WeChat Mini Game (Windows)
+
+# ---------------------------------------------------------------------------
+# HANDOFF NOTE — Windows port of .github/workflows/build-wechat.yml
+#
+# What it is: the same Cocos Creator 3.8.8 build (airplane/ -> wechatgame +
+# web-mobile) as the macOS workflow, but on a GitHub-hosted Windows runner.
+# It exists because GitHub's macOS arm64 runner capacity is blocked: runs
+# queue 15-27 min and then get infra-cancelled with "The job was not
+# acquired by Runner of type hosted" (billing verified $0 — NOT a quota
+# problem). Cocos Creator has NO Linux editor, so Windows is the only
+# alternative runner family. The macOS workflow is untouched; this file
+# is an experiment to run side by side with it.
+#
+# How to trigger it: Actions tab -> "Build WeChat Mini Game (Windows)" ->
+# "Run workflow" (workflow_dispatch). It also runs on push to master when
+# airplane/** or this file changes, same as the macOS workflow.
+#
+# What to watch for on the FIRST run:
+#   1. Cache miss: the first run downloads the ~980 MB Creator zip from the
+#      Cocos CDN and extracts it with Expand-Archive — ~3.9 GB, 51,661
+#      files — expect several minutes before the build steps start. Later
+#      runs reuse the cache (the extracted tree is ~3.9 GB; GitHub's cache
+#      limit is 10 GB per repo, so it fits, but it is big).
+#   2. Whether the Windows Creator CLI needs a display. The CLI is invoked
+#      headless (same --build args as macOS); CocosCreator.exe is a
+#      GUI-subsystem binary, so if it fails with a GUI/D3D error the port
+#      needs a virtual display or a different invocation — that failure
+#      mode was NOT verifiable without running it on Windows.
+#   3. The exe SHA-256 below is pinned from the 2026-11-17 download; if
+#      Cocos re-issues the zip for 3.8.8, update COCOS_CREATOR_EXE_SHA256.
+#      (Zip SHA-256 for reference: e365030aa4f24b515f499cf093cd86fdf38a0f763
+#      b5fbcacb20e96253e0fcc0b.)
+#   4. Compare its queue time against the macOS workflow: if Windows queues
+#      fast and builds green, it replaces macOS as the CI runner.
+#
+# Verified 2026-11-17 from the downloaded zip (NOT guessed):
+#   - The zip has NO top-level folder: CocosCreator.exe sits at the archive
+#     root, so Expand-Archive extracts straight into the cache dir.
+#   - CocosCreator.exe is a PE32+ GUI x86-64 binary, 180,338,408 bytes.
+#   - There is NO plain-text Creator version anywhere in the distribution
+#     (the `version` file is the Electron version, 31.3.1; the exe's version
+#     resource carries no 3.8.8 string), so this workflow does NOT check a
+#     version string — the SHA-256 pin plus the version-pinned CDN URL
+#     (v3.8.8) are the version guarantee, same role as the macOS pin.
+#
+# Do NOT land this file by editing the macOS workflow — it is a separate
+# file (.github/workflows/build-wechat-windows.yml) to be added via the
+# browser. No secrets are needed: the builds are fully offline and the
+# AppID is the public mini-game AppID (wx259411cbfcbbaa3f).
+#
+# Creator exit codes: 36 = build succeeded, 32 = bad build parameters,
+# 34 = build failure.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'airplane/**'
+      - '.github/workflows/build-wechat-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wechat-windows:
+    name: Build wechatgame on Windows (Cocos Creator 3.8.8)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    env:
+      # NOTE: the `runner` context is NOT available in job-level `env`
+      # (GitHub rejects the whole workflow file at load time if it is used
+      # there). Creator paths are set from $env:RUNNER_TEMP inside the
+      # `run:` scripts that need them instead.
+      COCOS_CREATOR_EXE_SHA256: 801334988540fa826a3016f21f8b7b039c855238e8f48bfa59b8bae393c11cb5
+      COCOS_CREATOR_ZIP_URL: https://download.cocos.com/CocosCreator/v3.8.8/CocosCreator-v3.8.8-win-121518.zip
+      WECHAT_BUILD_DIR: airplane/build/wechatgame
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache Cocos Creator 3.8.8
+        id: creator-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}\Cocos\Creator\3.8.8
+          key: cocos-creator-3.8.8-windows
+
+      - name: Install Cocos Creator 3.8.8
+        if: steps.creator-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $creatorDir = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8'
+          New-Item -ItemType Directory -Force -Path $creatorDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'cocos-creator-3.8.8.zip'
+          curl.exe -fsSL -o $zipPath $env:COCOS_CREATOR_ZIP_URL
+          # The zip is flat (no top-level folder): CocosCreator.exe lands
+          # directly in $creatorDir, so extract straight into it.
+          Expand-Archive -Path $zipPath -DestinationPath $creatorDir -Force
+          if (-not (Test-Path (Join-Path $creatorDir 'CocosCreator.exe') -PathType Leaf)) {
+            throw 'CocosCreator.exe not found after extraction'
+          }
+          Remove-Item -Force $zipPath
+
+      - name: Verify Creator 3.8.8 binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
+          if (-not (Test-Path $exe -PathType Leaf)) {
+            throw "CocosCreator.exe not found at $exe"
+          }
+          # NOTE: no version-string check on Windows — the exe is a stock
+          # Electron launcher whose version resource carries the Electron
+          # version (31.3.1), not the Creator version, and no plain-text
+          # Creator version exists in the distribution. The SHA-256 pin
+          # plus the version-pinned CDN URL (v3.8.8) are the guarantee.
+          $sha = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLower()
+          if ($sha -ne $env:COCOS_CREATOR_EXE_SHA256) {
+            throw "SHA-256 mismatch: $sha"
+          }
+          Write-Host "Cocos Creator 3.8.8 binary verified (sha256 $sha)"
+
+      - name: Build wechatgame
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
+          $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
+          & $exe --project "$ws/airplane" --build "stage=build;configPath=$ws/airplane/build-configs/wechatgame.json;"
+          $creatorStatus = $LASTEXITCODE
+          switch ($creatorStatus) {
+            36 { Write-Host 'Cocos Creator wechatgame build succeeded (exit 36).' }
+            32 { Write-Error 'Cocos Creator rejected the build parameters (exit 32).'; exit 32 }
+            34 { Write-Error 'Cocos Creator reported a build failure (exit 34).'; exit 34 }
+            default { Write-Error "Unexpected Cocos Creator exit code: $creatorStatus"; exit 1 }
+          }
+
+      - name: Report build size
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE $env:WECHAT_BUILD_DIR
+          if (-not (Test-Path $buildDir -PathType Container)) { throw "Build dir missing: $buildDir" }
+          if (-not (Test-Path (Join-Path $buildDir 'game.json') -PathType Leaf)) { throw 'game.json missing' }
+          if (-not (Test-Path (Join-Path $buildDir 'project.config.json') -PathType Leaf)) { throw 'project.config.json missing' }
+          Write-Host 'WeChat build files:'
+          Get-ChildItem -Recurse -File $buildDir | Sort-Object FullName | ForEach-Object { Write-Host $_.FullName }
+          $totalBytes = (Get-ChildItem -Recurse -File $buildDir | Measure-Object -Property Length -Sum).Sum
+          Write-Host ("Total build size: {0} bytes ({1:N2} MB)" -f $totalBytes, ($totalBytes / 1MB))
+          Write-Host 'Main-package limit for WeChat mini games is 4 MB (engine is separated, see separateEngine).'
+          if ($totalBytes -gt 20971520) { throw 'Build exceeds the 20 MB total package limit.' }
+
+      - name: Upload wechatgame artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wechatgame-${{ github.run_id }}-${{ github.run_attempt }}
+          path: airplane/build/wechatgame
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Build web-mobile (for browser playtesting)
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
+          $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
+          & $exe --project "$ws/airplane" --build "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=c69a7c48-3e23-42e1-83c4-c82a8d0d98ff;webOrientation=portrait;"
+          $creatorStatus = $LASTEXITCODE
+          switch ($creatorStatus) {
+            36 { Write-Host 'Cocos Creator web-mobile build succeeded (exit 36).' }
+            32 { Write-Error 'Cocos Creator rejected the build parameters (exit 32).'; exit 32 }
+            34 { Write-Error 'Cocos Creator reported a build failure (exit 34).'; exit 34 }
+            default { Write-Error "Unexpected Cocos Creator exit code: $creatorStatus"; exit 1 }
+          }
+
+      - name: Upload web-mobile artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-mobile-${{ github.run_id }}-${{ github.run_attempt }}
+          path: airplane/build/web-mobile
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
