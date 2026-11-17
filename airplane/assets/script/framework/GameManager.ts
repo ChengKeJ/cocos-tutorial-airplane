@@ -52,7 +52,7 @@ const SHIELD_SECONDS = 8;
 // Build version, shown on the menu (bottom corner) and in the menu status
 // line, so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.1';
+const GAME_VERSION = 'v1.0.2';
 
 @ccclass('GameManager')
 export class GameManager extends Component {
@@ -932,12 +932,12 @@ export class GameManager extends Component {
                 ['bullet03', (p) => { this.bullet03 = p; }],
                 ['bullet04', (p) => { this.bullet04 = p; }],
                 ['bullet05', (p) => { this.bullet05 = p; }],
-                ['enemy01', (p) => { this.enemy01 = p; }],
-                ['enemy02', (p) => { this.enemy02 = p; }],
+                ['plane02', (p) => { this.enemy01 = p; }],
+                ['plane03', (p) => { this.enemy02 = p; }],
                 ['explodeSmall', (p) => { this.enemyExplode = p; }],
-                ['propM', (p) => { this.bulletPropM = p; }],
-                ['propH', (p) => { this.bulletPropH = p; }],
-                ['propS', (p) => { this.bulletPropS = p; }],
+                ['bulletM', (p) => { this.bulletPropM = p; }],
+                ['bulletH', (p) => { this.bulletPropH = p; }],
+                ['bulletS', (p) => { this.bulletPropS = p; }],
             ];
             let pending = jobs.length;
             let failed = false;
