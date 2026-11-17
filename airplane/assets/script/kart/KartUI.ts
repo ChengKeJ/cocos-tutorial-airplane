@@ -220,9 +220,16 @@ export class KartUI extends Component {
         }
         if (this._itemLabel && this._game.karts[0]) {
             const p = this._game.karts[0];
-            this._itemLabel.string = p.itemKind > 0
-                ? (ITEM_NAMES[p.itemKind] || '') + (p.itemCount > 1 ? ' ×' + p.itemCount : '')
-                : '—';
+            if (p.starTime > 0) {
+                this._itemLabel.string = '⭐ 无敌中';
+            } else if (p.itemKind > 0) {
+                // '…' while the roulette is still spinning (itemArm > 0)
+                this._itemLabel.string = (ITEM_NAMES[p.itemKind] || '')
+                    + (p.itemCount > 1 ? ' ×' + p.itemCount : '')
+                    + (p.itemArm > 0 ? ' …' : '');
+            } else {
+                this._itemLabel.string = '—';
+            }
         }
     }
 
