@@ -66,3 +66,9 @@ quick_gen_project_*_autogen.sh.meta
 #//////////////////////////
 
 .vscode/
+
+# WeChat mini-game upload key and secrets — NEVER commit
+private.*.key
+*.pem
+.env
+node_modules/
