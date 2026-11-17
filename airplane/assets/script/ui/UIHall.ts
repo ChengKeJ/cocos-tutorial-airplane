@@ -11,7 +11,7 @@ const { ccclass, property } = _decorator;
  * URL = db://assets/script/ui/UIHall.ts
  * ManualUrl = https://docs.cocos.com/creator/3.3/manual/en/
  *
- * Hall / menu scene for the Star Fighter game hall (v1.0.6).
+ * Hall / menu scene for the Star Fighter game hall (v1.0.7).
  * The hall is the entry scene: it shows the game list and the plane
  * game's best score, and routes into the games. The plane game keeps
  * its own in-scene menu (UIMain "滑动开始游戏"); the hall only loads
@@ -27,7 +27,7 @@ const BEST_KEY = 'starfighter_best';
 // settings); the scene UUID does NOT resolve (Error 1209 "not in the
 // build settings"). The plane scene's name is 'airplane'.
 const PLANE_SCENE_NAME = 'airplane';
-const HALL_VERSION = 'v1.0.6';
+const HALL_VERSION = 'v1.0.7';
 
 @ccclass('UIHall')
 export class UIHall extends Component {
