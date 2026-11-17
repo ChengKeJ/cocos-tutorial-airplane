@@ -1,7 +1,7 @@
 /**
  * Items + AI item use for the kart game （飞车狂飙 v1.0.8, milestone 2).
  *
- * The 6 kinds from the spec (ChengKeJ/kart-royale Items.ts, MIT — numbers
+ * The 6 kinds from the design spec (MIT-licensed Three.js reference — numbers
  * ported, code rewritten for the arcade spline model):
  *   1 mushroom (boost 1.3x, 1.2s) · 2 triple mushroom (x3) ·
  *   3 green shell (straight, 33 m/s, wall bounce) ·
