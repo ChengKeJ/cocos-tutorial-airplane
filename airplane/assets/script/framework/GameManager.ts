@@ -28,6 +28,18 @@ const { ccclass, property } = _decorator;
  *   screen shake on player hit, auto-fire always on.
  * - Fully offline, no IAP, no ad calls (AD hook placeholder: none yet — ads are
  *   wired in a later release once the rewarded-video unit exists).
+ *
+ * v1.0.7 depth pass (2026-11-17):
+ * - Combo multiplier x1-x8: kills without taking a hit raise the score
+ *   multiplier (every 4 kills +1 step); a real hit resets it, a
+ *   shield-absorbed hit does not. HUD shows the live multiplier.
+ * - New enemy flavours: elite variants (bigger, 3x HP, guaranteed prop
+ *   drop), fast "charger" dives and "weaver" sine runs; regular enemies
+ *   fire aimed shots and occasional 3-way aimed fans.
+ * - Wave-clear choice: after each wave (1-4) pick 1 of 3 upgrades
+ *   (bomb / fire-rate / shield / life / score) before the next wave.
+ * - Game feel: combo milestone toasts, elite-kill double explosion,
+ *   boss-kill flash + shake + brief slow-mo before the victory screen.
  */
 
 interface WaveDef {
@@ -48,11 +60,15 @@ const WAVES: WaveDef[] = [
 const BEST_KEY = 'starfighter_best';
 const BOMB_MAX = 3;
 const SHIELD_SECONDS = 8;
+const COMBO_KILLS_PER_STEP = 4; // every 4 kills without a hit: +1 multiplier step
+const COMBO_MAX_MULT = 8;
+const ELITE_CHANCE = 0.12; // waves 2+: share of spawns rolled as an elite variant
+const ELITE_TYPE_OFFSET = 10; // elite of base type N reports as type N+10
 
 // Build version, stamped to the console at startup (nothing on screen)
 // so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.6';
+const GAME_VERSION = 'v1.0.7';
 
 @ccclass('GameManager')
 export class GameManager extends Component {
@@ -123,6 +139,15 @@ export class GameManager extends Component {
     private _score = 0;
     private _best = 0;
 
+    // combo multiplier (v1.0.7): kills without taking a hit raise the
+    // score multiplier; a real hit resets it, a shield block does not.
+    private _combo = 0;
+    private _comboMult = 1;
+    // fire-rate upgrades from wave choices (v1.0.7): 0-3, each -0.05s/shot
+    private _fireRateLevel = 0;
+    // boss-kill feel (v1.0.7): victory waits out a short celebration
+    private _victoryDelay = 0;
+
     // waves
     private _wave = 0;
     private _killsInWave = 0;
@@ -149,6 +174,11 @@ export class GameManager extends Component {
     private _bannerLabel: Label = null;
     private _toastLabel: Label = null;
     private _bossLabel: Label = null;
+    private _comboLabel: Label = null;
+    // wave-choice screen (v1.0.7): panel + 3 tappable options
+    private _choicePanel: Node = null;
+    private _choiceOptionLabels: Label[] = [];
+    private _choiceOptions: Array<{ label: string; run: () => void }> = [];
     private _bestLabel: Label = null;
     private _victoryLabel: Label = null;
     private _bannerTime = 0;
@@ -181,11 +211,14 @@ export class GameManager extends Component {
             return;
         }
 
-        // victory is deferred one frame so the boss node finishes its own
-        // trigger handling (and its pool return) before _destroyAll runs
+        // victory is deferred so the boss-kill celebration (flash, shake,
+        // slow-mo, explosions) plays before the victory screen appears
         if (this._victoryPending) {
-            this._victoryPending = false;
-            this.gameOver(true);
+            this._victoryDelay -= deltaTime;
+            if (this._victoryDelay <= 0) {
+                this._victoryPending = false;
+                this.gameOver(true);
+            }
             return;
         }
 
@@ -206,7 +239,7 @@ export class GameManager extends Component {
 
         // --- auto-fire: always on while playing ---
         this._currShootTime += deltaTime;
-        if(this._currShootTime > this.shootTime){
+        if(this._currShootTime > this._effectiveShootTime()){
             if (this._bulletType === Constant.BulletPropType.BULLET_H) {
                 this.createPlayerBulletH();
             } else if (this._bulletType === Constant.BulletPropType.BULLET_S) {
@@ -221,20 +254,19 @@ export class GameManager extends Component {
         }
 
         // --- wave state machine ---
-        if (this._waveState === 'banner' || this._waveState === 'clear') {
+        if (this._waveState === 'banner') {
             this._stateTimer -= deltaTime;
             if (this._stateTimer <= 0) {
-                if (this._waveState === 'banner') {
-                    if (this._wave === Constant.Wave.BOSS_WAVE) {
-                        this._spawnBoss();
-                        this._waveState = 'boss';
-                    } else {
-                        this._waveState = 'fighting';
-                    }
+                if (this._wave === Constant.Wave.BOSS_WAVE) {
+                    this._spawnBoss();
+                    this._waveState = 'boss';
                 } else {
-                    this._startWave(this._wave + 1);
+                    this._waveState = 'fighting';
                 }
             }
+        } else if (this._waveState === 'choice') {
+            // wave-clear upgrade screen: the player picks 1 of 3, then
+            // _applyChoice resumes into the next wave. Nothing spawns here.
         } else if (this._waveState === 'fighting') {
             this._spawnTimer += deltaTime;
             const waveDef = WAVES[this._wave - 1];
@@ -311,6 +343,12 @@ export class GameManager extends Component {
         this._waveState = 'idle';
         this._boss = null;
         this._victoryPending = false;
+        this._victoryDelay = 0;
+        this._setTimeScale(1);
+        this._resetCombo();
+        this._fireRateLevel = 0;
+        if (this._choicePanel) { this._choicePanel.active = false; }
+        this._choiceOptions = [];
         if (this._bossLabel) { this._bossLabel.node.active = false; }
         if (this._victoryLabel) { this._victoryLabel.node.active = false; }
         if (this._bannerLabel) { this._bannerLabel.node.active = false; }
@@ -337,7 +375,13 @@ export class GameManager extends Component {
         this._score = 0;
         this.gameScore.string = this._score.toString();
         this._resetWeapon();
-        this._currShootTime = this.shootTime;
+        this._currShootTime = this._effectiveShootTime();
+        this._resetCombo();
+        this._fireRateLevel = 0;
+        this._victoryDelay = 0;
+        this._setTimeScale(1);
+        if (this._choicePanel) { this._choicePanel.active = false; }
+        this._choiceOptions = [];
         this._lives = 3;
         this._bombs = 1;
         this._shieldTime = 0;
@@ -367,6 +411,9 @@ export class GameManager extends Component {
             return;
         }
         this.isGameStart = false;
+        this._setTimeScale(1);
+        if (this._choicePanel) { this._choicePanel.active = false; }
+        this._choiceOptions = [];
         this.gamePage.active = false;
         this.gameOverPage.active = true;
         this.gameOverScore.string = this._score.toString();
@@ -399,22 +446,101 @@ export class GameManager extends Component {
 
     /** Called by EnemyPlane when it dies (bullet kill or ramming). */
     public onEnemyKilled(type: number, score: number, pos: Vec3, isBoss: boolean){
-        this.addScore(score);
         if (isBoss) {
+            // the boss score also rides the combo multiplier, then the
+            // kill celebration plays before the victory screen
+            this.addScore(score * this._comboMult);
             this._boss = null;
             if (this._bossLabel) { this._bossLabel.node.active = false; }
-            this._victoryPending = true;
+            this._startBossKillFeel(pos);
             return;
         }
-        this._killsInWave++;
-        // 8% drop chance: mostly bullet upgrades, sometimes shield / bomb
-        if (Math.random() < 0.08) {
-            const roll = Math.random();
-            const kind = roll < 0.55 ? Constant.PropKind.BULLET
-                : roll < 0.78 ? Constant.PropKind.SHIELD
-                : Constant.PropKind.BOMB;
-            this.createBulletProp(kind, pos.x, pos.z);
+        // combo: every COMBO_KILLS_PER_STEP clean kills raise the multiplier
+        this._combo++;
+        const newMult = Math.min(COMBO_MAX_MULT, 1 + Math.floor(this._combo / COMBO_KILLS_PER_STEP));
+        if (newMult > this._comboMult) {
+            this._comboMult = newMult;
+            if (newMult === COMBO_MAX_MULT) {
+                this._showToast('🔥🔥🔥 连击 x8 MAX！');
+            } else if (newMult === 4) {
+                this._showToast('🔥🔥 连击 x4！');
+            } else if (newMult === 2) {
+                this._showToast('🔥 连击 x2！');
+            }
         }
+        this.addScore(score * this._comboMult);
+        this._refreshComboHud();
+        this._killsInWave++;
+        const isElite = type >= ELITE_TYPE_OFFSET;
+        if (isElite) {
+            // elites always drop a prop, explode bigger, and shake the screen
+            this._dropProp(pos);
+            this.createEnemyEffect(new Vec3(pos.x + 4, pos.y, pos.z));
+            this.shake(0.5, 0.25);
+            this._showToast('👑 精英敌机击落！');
+        } else if (Math.random() < 0.08) {
+            // 8% drop chance: mostly bullet upgrades, sometimes shield / bomb
+            this._dropProp(pos);
+        }
+    }
+
+    /** Roll one prop drop at a position (bullet / shield / bomb). */
+    private _dropProp(pos: Vec3){
+        const roll = Math.random();
+        const kind = roll < 0.55 ? Constant.PropKind.BULLET
+            : roll < 0.78 ? Constant.PropKind.SHIELD
+            : Constant.PropKind.BOMB;
+        this.createBulletProp(kind, pos.x, pos.z);
+    }
+
+    /** Boss-kill celebration: multi-explosion + flash + shake + brief
+     * slow-mo; the victory screen follows after _victoryDelay. */
+    private _startBossKillFeel(pos: Vec3){
+        this.createEnemyEffect(pos);
+        this.createEnemyEffect(new Vec3(pos.x - 6, pos.y, pos.z + 4));
+        this.createEnemyEffect(new Vec3(pos.x + 6, pos.y, pos.z - 4));
+        this.shake(2.0, 0.8);
+        this._showBanner('👹 钢铁巨兽被击沉！');
+        this._setTimeScale(0.35);
+        this._victoryPending = true;
+        // deltaTime is scaled by the slow-mo, so 0.5s of scaled time
+        // reads as ~1.4s of real time on screen
+        this._victoryDelay = 0.5;
+    }
+
+    /** Slow-mo via the engine scheduler; guarded — if the API is absent
+     * the game just plays at normal speed. Always restored in gameOver. */
+    private _setTimeScale(scale: number){
+        try {
+            const scheduler = (director as any).getScheduler();
+            if (scheduler && typeof scheduler.setTimeScale === 'function') {
+                scheduler.setTimeScale(scale);
+            }
+        } catch (e) {
+            // no slow-mo on this runtime; the flash + shake still play
+        }
+    }
+
+    private _resetCombo(){
+        this._combo = 0;
+        this._comboMult = 1;
+        this._refreshComboHud();
+    }
+
+    private _refreshComboHud(){
+        if (!this._comboLabel) {
+            return;
+        }
+        if (this._combo <= 0) {
+            this._comboLabel.string = '';
+            return;
+        }
+        this._comboLabel.string = this._comboMult > 1
+            ? '🔥 连击 x' + this._comboMult + ' · ' + this._combo + '连杀'
+            : '连击 ' + this._combo;
+        this._comboLabel.color = this._comboMult > 1
+            ? new Color(255, 196, 0, 255)
+            : new Color(255, 255, 255, 255);
     }
 
     /** Boss HP bar update. */
@@ -441,6 +567,8 @@ export class GameManager extends Component {
             this._refreshHud();
             return;
         }
+        // a real hit breaks the combo (a shield-absorbed hit does not)
+        this._resetCombo();
         const hpLeft = this.playerPlane.damage();
         this.shake(0.6, 0.35);
         if (hpLeft <= 0) {
@@ -578,17 +706,35 @@ export class GameManager extends Component {
 
     // ---------- enemy bullets ----------
 
-    public createEnemyBullet(targetPos: Vec3, direction: number = Constant.Direction.MIDDLE){
-        // const bullet = instantiate(this.bullet01);
-        const bullet = PoolManager.instance().getNode(this.bullet02, this.bulletRoot);
-        // bullet.setParent(this.bulletRoot);
-        bullet.setPosition(targetPos.x, targetPos.y, targetPos.z + 6);
-        const bulletComp = bullet.getComponent(Bullet);
-        bulletComp.show(1, true, direction);
-
-        const colliderComp = bullet.getComponent(BoxCollider);
-        colliderComp.setGroup(Constant.CollisionType.ENEMY_BULLET);
-        colliderComp.setMask(Constant.CollisionType.SELF_PLANE);
+    public createEnemyBullet(targetPos: Vec3, direction: number = Constant.Direction.MIDDLE, fan: boolean = false){
+        // v1.0.7: regular enemies aim at the player. A bare MIDDLE call
+        // (the EnemyPlane default) steers toward the player's x; an
+        // explicit direction (the boss aimed shot) is kept as-is.
+        let centre = direction;
+        if (direction === Constant.Direction.MIDDLE) {
+            const playerX = this.playerPlane ? this.playerPlane.node.position.x : targetPos.x;
+            centre = playerX < targetPos.x - 1 ? Constant.Direction.LEFT
+                : playerX > targetPos.x + 1 ? Constant.Direction.RIGHT
+                : Constant.Direction.MIDDLE;
+        }
+        // occasional aimed fan: the centre shot plus its neighbour lane(s)
+        const doFan = fan || (direction === Constant.Direction.MIDDLE && Math.random() < 0.35);
+        const dirs = doFan
+            ? centre === Constant.Direction.LEFT ? [Constant.Direction.LEFT, Constant.Direction.MIDDLE]
+            : centre === Constant.Direction.RIGHT ? [Constant.Direction.MIDDLE, Constant.Direction.RIGHT]
+            : [Constant.Direction.LEFT, Constant.Direction.MIDDLE, Constant.Direction.RIGHT]
+            : [centre];
+        // Direction values are 1/2/3 (LEFT/MIDDLE/RIGHT)
+        const offs = [0, -3, 0, 3];
+        for (const dir of dirs) {
+            const bullet = PoolManager.instance().getNode(this.bullet02, this.bulletRoot);
+            bullet.setPosition(targetPos.x + offs[dir], targetPos.y, targetPos.z + 6);
+            const bulletComp = bullet.getComponent(Bullet);
+            bulletComp.show(1, true, dir);
+            const colliderComp = bullet.getComponent(BoxCollider);
+            colliderComp.setGroup(Constant.CollisionType.ENEMY_BULLET);
+            colliderComp.setMask(Constant.CollisionType.SELF_PLANE);
+        }
     }
 
     /** Boss 3-way spread volley. */
@@ -658,6 +804,28 @@ export class GameManager extends Component {
             moveMode = Constant.MoveMode.DIVE;
             scale = 0.7;
             needBullet = false;
+        }
+
+        // v1.0.7 flavours, built only from the existing movement modes:
+        // - "charger": a fast TYPE4 that dives at the player (waves 3+)
+        // - "weaver": a fast sine-wave TYPE2 (waves 3+)
+        // - "elite": any type, waves 2+, bigger + 3x HP, type+10, and a
+        //   guaranteed prop drop on kill (see onEnemyKilled)
+        if (type === Constant.EnemyType.TYPE4 && this._wave >= 3 && Math.random() < 0.25) {
+            speed = this.enemy2Speed * 2.6 * speedMul;
+            hp = 2;
+            scale = 0.9;
+            score = 20;
+        } else if (type === Constant.EnemyType.TYPE2 && this._wave >= 3 && Math.random() < 0.3) {
+            speed = this.enemy2Speed * 1.35 * speedMul;
+            hp = 2;
+            score = 20;
+        }
+        if (this._wave >= 2 && Math.random() < ELITE_CHANCE) {
+            hp = Math.max(2, hp * 3);
+            scale = scale * 1.5;
+            score = score * 2 + 10;
+            type = type + ELITE_TYPE_OFFSET;
         }
 
         const enemy = PoolManager.instance().getNode(prefab, this.node);
@@ -804,11 +972,94 @@ export class GameManager extends Component {
     private _waveClear(){
         const bonus = 100 * this._wave;
         this.addScore(bonus);
-        this._waveState = 'clear';
-        this._stateTimer = 2.5;
+        this._waveState = 'choice';
         this._showBanner('第 ' + this._wave + ' 波 · 已清空！ +' + bonus);
         this.clearAllEnemies(false);
         this.clearEnemyBullets();
+        this._showChoice();
+    }
+
+    // ---------- wave-clear choices (v1.0.7) ----------
+
+    /** True while the wave-clear upgrade screen is open (UIMain freezes
+     * plane movement so a choice tap does not yank the plane). */
+    public isChoiceOpen(): boolean {
+        return this._waveState === 'choice';
+    }
+
+    /** Pick option i (0-2). Called by the option nodes and by UIMain keys. */
+    public applyChoice(index: number){
+        if (this._waveState !== 'choice') {
+            return;
+        }
+        const choice = this._choiceOptions[index];
+        if (!choice) {
+            return;
+        }
+        if (this._choicePanel) {
+            this._choicePanel.active = false;
+        }
+        this._choiceOptions = [];
+        choice.run();
+        this._refreshHud();
+        this._startWave(this._wave + 1);
+    }
+
+    private _showChoice(){
+        this._choiceOptions = this._buildChoices();
+        for (let i = 0; i < 3; i++) {
+            const label = this._choiceOptionLabels[i];
+            if (label) {
+                label.string = this._choiceOptions[i] ? this._choiceOptions[i].label : '';
+            }
+        }
+        if (this._choicePanel) {
+            this._choicePanel.active = true;
+        }
+    }
+
+    private _buildChoices(): Array<{ label: string; run: () => void }>{
+        const pool: Array<{ label: string; run: () => void }> = [];
+        pool.push({ label: '🛡 护盾 8 秒', run: () => { this.grantShield(); } });
+        const bonus = 150 * this._wave;
+        pool.push({ label: '⭐ 积分 +' + bonus, run: () => { this.addScore(bonus); this._showToast('⭐ 积分 +' + bonus + '！'); } });
+        if (this._bombs < BOMB_MAX) {
+            pool.push({ label: '💣 炸弹 +1', run: () => { this.grantBomb(); } });
+        }
+        if (this._lives < 3) {
+            pool.push({ label: '❤ 生命 +1', run: () => {
+                this._lives = Math.min(3, this._lives + 1);
+                this._refreshHud();
+                this._showToast('❤ 生命 +1！');
+            } });
+        }
+        if (this._fireRateLevel < 3) {
+            pool.push({ label: '⚡ 射速提升', run: () => {
+                this._fireRateLevel++;
+                this._showToast('⚡ 射速提升 Lv.' + this._fireRateLevel + '！');
+            } });
+        }
+        // shuffle and take 3; score bonuses pad the list when maxed-out
+        // options (bomb / life / fire-rate) shrink the pool below 3
+        for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const tmp = pool[i];
+            pool[i] = pool[j];
+            pool[j] = tmp;
+        }
+        const picked = pool.slice(0, 3);
+        let pad = 1;
+        while (picked.length < 3) {
+            const extra = bonus + 100 * pad;
+            picked.push({ label: '⭐ 积分 +' + extra, run: () => { this.addScore(extra); this._showToast('⭐ 积分 +' + extra + '！'); } });
+            pad++;
+        }
+        return picked;
+    }
+
+    /** Seconds between player shots, after fire-rate upgrades. */
+    private _effectiveShootTime(): number {
+        return Math.max(0.15, this.shootTime - 0.05 * this._fireRateLevel);
     }
 
     // ---------- HUD (runtime labels) ----------
@@ -984,6 +1235,35 @@ export class GameManager extends Component {
         this._toastLabel.node.active = false;
         this._bossLabel = this._makeHudLabel('hudBoss', this.gamePage, 0, 560, 24, red);
         this._bossLabel.node.active = false;
+        this._comboLabel = this._makeHudLabel('hudCombo', this.gamePage, 0, 520, 28, gold);
+        this._refreshComboHud();
+
+        // wave-clear choice panel (hidden until a wave clears)
+        this._choicePanel = new Node('choicePanel');
+        this._choicePanel.setParent(this.gamePage);
+        this._choicePanel.setPosition(0, 0, 0);
+        const choiceTitle = new Node('choiceTitle');
+        choiceTitle.setParent(this._choicePanel);
+        choiceTitle.setPosition(0, 180, 0);
+        const choiceTitleLabel = choiceTitle.addComponent(Label);
+        choiceTitleLabel.fontSize = 40;
+        choiceTitleLabel.color = gold;
+        choiceTitleLabel.string = '🎁 选择一个强化！';
+        this._choiceOptionLabels = [];
+        for (let i = 0; i < 3; i++) {
+            const opt = new Node('choiceOpt' + i);
+            opt.setParent(this._choicePanel);
+            opt.setPosition(0, 60 - i * 110, 0);
+            const transform = opt.addComponent(UITransform);
+            transform.setContentSize(560, 90);
+            const label = opt.addComponent(Label);
+            label.fontSize = 32;
+            label.color = white;
+            label.string = '';
+            this._choiceOptionLabels.push(label);
+            opt.on(Node.EventType.TOUCH_START, () => { this.applyChoice(i); }, this);
+        }
+        this._choicePanel.active = false;
 
         // menu best-score label (gameStart page is the Canvas child named 'gameStart')
         this.gameStartPage = find('Canvas/gameStart');
