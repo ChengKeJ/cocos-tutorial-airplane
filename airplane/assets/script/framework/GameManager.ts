@@ -1067,9 +1067,10 @@ export class GameManager extends Component {
     private _makeHudLabel(name: string, parent: Node, x: number, y: number, fontSize: number, color: Color): Label {
         const node = new Node(name);
         // Runtime-created nodes default to the DEFAULT layer, which the UI
-        // camera never renders (it only sees UI_2D/UI_3D) — every runtime
-        // HUD label since v1.0.0 was invisible and untappable for this
-        // reason. Scene-wired labels carry UI_2D in the scene file.
+        // camera never renders (it only sees UI_2D/UI_3D, visibility
+        // 41943040) — every runtime HUD label since v1.0.0 was invisible
+        // and untappable for this reason. Scene-wired labels carry UI_2D
+        // in the scene file.
         node.layer = Layers.Enum.UI_2D;
         node.setParent(parent);
         node.setPosition(x, y, 0);
