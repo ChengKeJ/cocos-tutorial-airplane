@@ -155,7 +155,7 @@ jobs:
           COCOS_CREATOR_BIN="$RUNNER_TEMP/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator"
           "$COCOS_CREATOR_BIN" \
             --project "$GITHUB_WORKSPACE/airplane" \
-            --build "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=1078973b-67f7-4366-8a61-e2ddd39429c8;webOrientation=portrait;"
+            --build "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=c69a7c48-3e23-42e1-83c4-c82a8d0d98ff;webOrientation=portrait;"
           creator_status=$?
           set -e
           case "$creator_status" in
