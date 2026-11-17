@@ -14,7 +14,7 @@
  * frame {pos, tangent, right, up, half, bank, zone, raceLat}.
  */
 
-import { Layers, Material, Mat4, MeshRenderer, Node, Quat, Vec3, Color, primitive, utils } from 'cc';
+import { Layers, Material, ModelComponent, Node, Quat, Vec3, Color, primitives, utils } from 'cc';
 
 // ---------------------------------------------------------------------------
 // Layout tables (spec: src/world/TrackLayout.ts)
@@ -714,7 +714,6 @@ interface Bucket {
     indices: number[];
 }
 
-const _m4 = new Mat4();
 const _q = new Quat();
 const _sv = new Vec3();
 const _pv = new Vec3();
@@ -753,10 +752,12 @@ export class MeshBuilder {
         for (let i = 0; i < indices.length; i++) { bk.indices.push(indices[i] + base); }
     }
 
-    /** Transform a primitive into a colour bucket. */
+    /** Transform a primitive into a colour bucket.
+     *  Manual TRS (scale -> rotate about Y -> translate): Mat4.fromTRS does
+     *  not exist at runtime in Creator 3.8.8, and Vec3.transformMat4 would
+     *  need the matrix — the same result by hand with transformQuat. */
     public addPrimitive(hex: number, prim: any, pos: Vec3, rotY: number, scale: Vec3): void {
         Quat.fromEuler(_q, 0, rotY * 180 / Math.PI, 0);
-        Mat4.fromTRS(_m4, pos, _q, scale);
         const bk = this._bucket(hex);
         const base = bk.positions.length / 3;
         const p = prim.positions as number[];
@@ -764,9 +765,9 @@ export class MeshBuilder {
         const uv = prim.uvs as number[];
         const idx = prim.indices as number[];
         for (let i = 0; i < p.length; i += 3) {
-            _pv.set(p[i], p[i + 1], p[i + 2]);
-            Vec3.transformMat4(_pv, _pv, _m4);
-            bk.positions.push(_pv.x, _pv.y, _pv.z);
+            _pv.set(p[i] * scale.x, p[i + 1] * scale.y, p[i + 2] * scale.z);
+            Vec3.transformQuat(_pv, _pv, _q);
+            bk.positions.push(_pv.x + pos.x, _pv.y + pos.y, _pv.z + pos.z);
         }
         for (let i = 0; i < n.length; i += 3) {
             _nv.set(n[i], n[i + 1], n[i + 2]);
@@ -779,22 +780,22 @@ export class MeshBuilder {
 
     /** Axis-aligned box centred at pos, rotated rotY radians about Y. */
     public addBox(hex: number, pos: Vec3, rotY: number, w: number, h: number, d: number): void {
-        this.addPrimitive(hex, primitive.box(w, h, d), pos, rotY, _sv.set(1, 1, 1));
+        this.addPrimitive(hex, primitives.box({ width: w, height: h, length: d }), pos, rotY, _sv.set(1, 1, 1));
     }
 
     /** Y-axis cylinder (radiusTop 0 = cone tip) centred at pos. */
     public addCylinder(hex: number, pos: Vec3, rotY: number, rTop: number, rBottom: number, h: number): void {
-        this.addPrimitive(hex, primitive.cylinder(rTop, rBottom, h, { radialSegments: 12 }), pos, rotY, _sv.set(1, 1, 1));
+        this.addPrimitive(hex, primitives.cylinder(rTop, rBottom, h, { radialSegments: 12 }), pos, rotY, _sv.set(1, 1, 1));
     }
 
     /** Cone (radialSegments-sided; 4 = pyramid roof, 10 = tree) centred at pos. */
     public addCone(hex: number, pos: Vec3, rotY: number, radius: number, h: number, segments: number = 10): void {
-        this.addPrimitive(hex, primitive.cylinder(0, radius, h, { radialSegments: segments }), pos, rotY, _sv.set(1, 1, 1));
+        this.addPrimitive(hex, primitives.cylinder(0, radius, h, { radialSegments: segments }), pos, rotY, _sv.set(1, 1, 1));
     }
 
     /** Sphere scaled (rx, ry, rz) centred at pos. */
     public addSphere(hex: number, pos: Vec3, rotY: number, rx: number, ry: number, rz: number): void {
-        this.addPrimitive(hex, primitive.sphere(1, { segments: 10 }), pos, rotY, _sv.set(rx, ry, rz));
+        this.addPrimitive(hex, primitives.sphere(1, { segments: 10 }), pos, rotY, _sv.set(rx, ry, rz));
     }
 
     /** Emit one Node per colour bucket under parent. Returns the root node. */
@@ -830,7 +831,10 @@ export class MeshBuilder {
             const node = new Node('mesh_' + hex.toString(16));
             node.layer = Layers.Enum.DEFAULT;
             node.setParent(root);
-            const renderer = node.addComponent(MeshRenderer);
+            // NOTE: cc.MeshRenderer is NOT exported by the engine module in
+            // this project's build (Creator 3.8.8 prunes it); ModelComponent
+            // is its base class and renders identically (verified live).
+            const renderer = node.addComponent(ModelComponent);
             renderer.mesh = mesh;
             renderer.setMaterial(mat, 0);
         }
