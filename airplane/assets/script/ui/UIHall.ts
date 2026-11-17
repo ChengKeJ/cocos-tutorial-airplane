@@ -23,7 +23,10 @@ const { ccclass, property } = _decorator;
  */
 
 const BEST_KEY = 'starfighter_best';
-const PLANE_SCENE_UUID = '1078973b-67f7-4366-8a61-e2ddd39429c8';
+// director.loadScene takes the scene NAME (it looks it up in the build
+// settings); the scene UUID does NOT resolve (Error 1209 "not in the
+// build settings"). The plane scene's name is 'airplane'.
+const PLANE_SCENE_NAME = 'airplane';
 const HALL_VERSION = 'v1.0.7';
 
 @ccclass('UIHall')
@@ -52,7 +55,7 @@ export class UIHall extends Component {
 
     /** Entry 1: load the plane game scene (its own menu starts the run). */
     public onPlayPlane () {
-        director.loadScene(PLANE_SCENE_UUID);
+        director.loadScene(PLANE_SCENE_NAME);
     }
 
     /** Entry 2 (stub): kart is not built yet — toast and stay on the hall. */
