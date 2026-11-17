@@ -31,8 +31,11 @@ jobs:
     timeout-minutes: 60
 
     env:
-      COCOS_CREATOR_APP: ${{ runner.temp }}/Cocos/Creator/3.8.8/CocosCreator.app
-      COCOS_CREATOR_BIN: ${{ runner.temp }}/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator
+      # NOTE: the `runner` context is NOT available in job-level `env`
+      # (GitHub rejects the whole workflow file at load time if it is used
+      # there — run 44015193564 failed instantly with zero jobs for exactly
+      # this reason). Creator paths are set from $RUNNER_TEMP inside the
+      # `run:` scripts that need them instead.
       COCOS_CREATOR_BIN_SHA256: 3a8452496c03e85f2784e64679a1fd203701b0b245125efee02c7923f2bd3464
       COCOS_CREATOR_ZIP_URL: https://download.cocos.com/CocosCreator/v3.8.8/CocosCreator-v3.8.8-mac-121518.zip
       WECHAT_BUILD_DIR: airplane/build/wechatgame
@@ -71,6 +74,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          COCOS_CREATOR_APP="$RUNNER_TEMP/Cocos/Creator/3.8.8/CocosCreator.app"
+          COCOS_CREATOR_BIN="$RUNNER_TEMP/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator"
           test -x "$COCOS_CREATOR_BIN"
           creator_version=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$COCOS_CREATOR_APP/Contents/Info.plist")
           test "$creator_version" = "3.8.8"
@@ -82,6 +87,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          COCOS_CREATOR_BIN="$RUNNER_TEMP/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator"
           "$COCOS_CREATOR_BIN" \
             --project "$GITHUB_WORKSPACE/airplane" \
             --build "stage=build;configPath=$GITHUB_WORKSPACE/airplane/build-configs/wechatgame.json;"
