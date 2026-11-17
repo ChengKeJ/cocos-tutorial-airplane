@@ -27,7 +27,11 @@ permissions:
 jobs:
   build-wechat:
     name: Build wechatgame (Cocos Creator 3.8.8)
-    runs-on: macos-14
+    # NOTE: macos-14 was retired by GitHub on 2026-11-02 (actions/runner-images);
+    # any job naming it is cancelled instantly with "The configuration
+    # 'macos-14-arm64-us-default' is not supported" (run 44015841102).
+    # macos-15 is the pinned replacement (macos-latest currently = macos-26).
+    runs-on: macos-15
     timeout-minutes: 60
 
     env:
@@ -51,7 +55,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/Cocos/Creator/3.8.8
-          key: cocos-creator-3.8.8-macos-14
+          key: cocos-creator-3.8.8-macos-15
 
       - name: Install Cocos Creator 3.8.8
         if: steps.creator-cache.outputs.cache-hit != 'true'
