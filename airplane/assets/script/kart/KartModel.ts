@@ -15,7 +15,7 @@
  *   shadow disc r 1.25 @ y 0.05 (opaque dark disc, no transparency needed)
  */
 
-import { Layers, Material, MeshRenderer, Node, Vec3, primitive, utils } from 'cc';
+import { Layers, Material, ModelComponent, Node, Vec3, primitives, utils } from 'cc';
 import { MeshBuilder } from './KartTrack';
 
 export interface KartModel {
@@ -40,7 +40,7 @@ let _shadowMat: Material | null = null;
 function wheelMesh(): any {
     if (!_wheelMesh) {
         // cylinder is Y-axis; rotate about Z by 90 deg so the axle is X
-        const prim = primitive.cylinder(0.34, 0.34, 0.28, { radialSegments: 14 });
+        const prim = primitives.cylinder(0.34, 0.34, 0.28, { radialSegments: 14 });
         const pos = prim.positions as number[];
         const nor = prim.normals as number[];
         for (let i = 0; i < pos.length; i += 3) {
@@ -69,7 +69,7 @@ function wheelMaterial(): Material {
 
 function shadowMesh(): any {
     if (!_shadowMesh) {
-        const prim = primitive.cylinder(1.25, 1.25, 0.04, { radialSegments: 20 });
+        const prim = primitives.cylinder(1.25, 1.25, 0.04, { radialSegments: 20 });
         const minPos = new Vec3(-1.25, -0.02, -1.25);
         const maxPos = new Vec3(1.25, 0.02, 1.25);
         _shadowMesh = utils.MeshUtils.createMesh({
@@ -89,7 +89,9 @@ function addMeshNode(parent: Node, name: string, mesh: any, mat: Material): Node
     const node = new Node(name);
     node.layer = Layers.Enum.DEFAULT;
     node.setParent(parent);
-    const r = node.addComponent(MeshRenderer);
+    // NOTE: cc.MeshRenderer is not exported by this build's engine module;
+    // ModelComponent (its base class) renders identically (verified live).
+    const r = node.addComponent(ModelComponent);
     r.mesh = mesh;
     r.setMaterial(mat, 0);
     return node;
