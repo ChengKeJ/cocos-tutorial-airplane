@@ -17,7 +17,7 @@ const { ccclass, property } = _decorator;
  * its own in-scene menu (UIMain "滑动开始游戏"); the hall only loads
  * the plane scene — it does not start gameplay itself.
  * - 星空战机: director.loadScene the airplane scene.
- * - 飞车: stub — shows "即将上线" and stays on the hall (loads nothing).
+ * - 飞车: director.loadScene the kart scene (its menu picks 正赛 / 逆向）.
  * Best score is read from the same localStorage key the plane game
  * writes ('starfighter_best', see GameManager.BEST_KEY).
  */
@@ -25,8 +25,10 @@ const { ccclass, property } = _decorator;
 const BEST_KEY = 'starfighter_best';
 // director.loadScene takes the scene NAME (it looks it up in the build
 // settings); the scene UUID does NOT resolve (Error 1209 "not in the
-// build settings"). The plane scene's name is 'airplane'.
+// build settings"). The plane scene's name is 'airplane', the kart
+// scene's is 'kart' (both are listed in build-configs/wechatgame.json).
 const PLANE_SCENE_NAME = 'airplane';
+const KART_SCENE_NAME = 'kart';
 const HALL_VERSION = 'v1.0.7';
 
 @ccclass('UIHall')
@@ -58,9 +60,9 @@ export class UIHall extends Component {
         director.loadScene(PLANE_SCENE_NAME);
     }
 
-    /** Entry 2 (stub): kart is not built yet — toast and stay on the hall. */
+    /** Entry 2: load the kart game scene (its own menu picks 正赛 / 逆向）. */
     public onPlayKart () {
-        this._showToast('飞车即将上线，敬请期待！');
+        director.loadScene(KART_SCENE_NAME);
     }
 
     private _refreshBest () {
