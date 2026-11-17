@@ -49,6 +49,11 @@ const BEST_KEY = 'starfighter_best';
 const BOMB_MAX = 3;
 const SHIELD_SECONDS = 8;
 
+// Build version, shown on the menu (bottom corner) and in the menu status
+// line, so a playtest report can be tied to a build at a glance. Bump on
+// every upload; the upload --uv version number must match.
+const GAME_VERSION = 'v1.0.1';
+
 @ccclass('GameManager')
 export class GameManager extends Component {
     // The player plane is NOT wired in the scene (playerPlane: null there);
@@ -148,6 +153,7 @@ export class GameManager extends Component {
     // trial diagnostics (remove before review submission): menu bundle
     // state line + in-game touch/plane debug line
     private _statusLabel: Label = null;
+    private _versionLabel: Label = null;
     private _debugLabel: Label = null;
 
     // screen shake (Main Camera)
@@ -869,13 +875,13 @@ export class GameManager extends Component {
         }
         const state = this.getHeavyState();
         if (state === 'ready') {
-            this._statusLabel.string = '资源：已就绪';
+            this._statusLabel.string = GAME_VERSION + ' · 资源：已就绪';
             this._statusLabel.color = new Color(120, 255, 150, 255);
         } else if (state === 'failed') {
-            this._statusLabel.string = '资源：加载失败，点屏幕重试';
+            this._statusLabel.string = GAME_VERSION + ' · 资源：加载失败，点屏幕重试';
             this._statusLabel.color = new Color(255, 90, 90, 255);
         } else {
-            this._statusLabel.string = '资源：加载中…';
+            this._statusLabel.string = GAME_VERSION + ' · 资源：加载中…';
             this._statusLabel.color = new Color(255, 255, 255, 255);
         }
     }
@@ -1018,6 +1024,9 @@ export class GameManager extends Component {
             this._refreshBestLabel();
             this._statusLabel = this._makeHudLabel('hudStatus', this.gameStartPage, 0, -480, 22, white);
             this._refreshStatusLabel();
+            // build version (bottom corner of the menu) — trial only
+            this._versionLabel = this._makeHudLabel('hudVersion', this.gameStartPage, 0, -540, 20, new Color(180, 180, 180, 255));
+            this._versionLabel.string = '星空战机 ' + GAME_VERSION;
         }
 
         // victory label on the game-over page
