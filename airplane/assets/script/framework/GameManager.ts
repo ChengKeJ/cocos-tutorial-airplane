@@ -1,5 +1,5 @@
 
-import { _decorator, Component, Node, Prefab, math, Vec3, BoxCollider, Label, Animation, sys, find, UITransform, Color } from 'cc';
+import { _decorator, Component, Node, Prefab, math, Vec3, BoxCollider, Label, Animation, sys, find, UITransform, Color, assetManager, director } from 'cc';
 import { Bullet } from '../bullet/Bullet';
 import { BulletProp } from '../bullet/BulletProp';
 import { EnemyPlane } from '../plane/EnemyPlane';
@@ -51,19 +51,19 @@ const SHIELD_SECONDS = 8;
 
 @ccclass('GameManager')
 export class GameManager extends Component {
-    @property(SelfPlane)
+    // The player plane is NOT wired in the scene (playerPlane: null there);
+    // it is resolved from the scene in _init(). Kept public: EnemyPlane
+    // reads gameManager.playerPlane during gameplay.
     public playerPlane: SelfPlane = null;
+    // Gameplay prefabs live in the "heavy" Asset Bundle (WeChat subpackage).
+    // They are NOT scene references any more — the scene cannot reference
+    // subpackage assets — they are loaded from the bundle at menu time.
     // bullet
-    @property(Prefab)
-    public bullet01: Prefab = null;
-    @property(Prefab)
-    public bullet02: Prefab = null;
-    @property(Prefab)
-    public bullet03: Prefab = null;
-    @property(Prefab)
-    public bullet04: Prefab = null;
-    @property(Prefab)
-    public bullet05: Prefab = null;
+    private bullet01: Prefab = null;
+    private bullet02: Prefab = null;
+    private bullet03: Prefab = null;
+    private bullet04: Prefab = null;
+    private bullet05: Prefab = null;
     @property
     public shootTime = 0.3;
     @property
@@ -72,26 +72,20 @@ export class GameManager extends Component {
     public bulletRoot: Node = null;
 
     // enemy
-    @property(Prefab)
-    public enemy01: Prefab = null;
-    @property(Prefab)
-    public enemy02: Prefab = null;
+    private enemy01: Prefab = null;
+    private enemy02: Prefab = null;
     @property
     public createEnemyTime = 1;
     @property
     public enemy1Speed = 0.5;
     @property
     public enemy2Speed = 0.7;
-    @property(Prefab)
-    public enemyExplode: Prefab = null;
+    private enemyExplode: Prefab = null;
 
     // prop
-    @property(Prefab)
-    public bulletPropM: Prefab = null;
-    @property(Prefab)
-    public bulletPropH: Prefab = null;
-    @property(Prefab)
-    public bulletPropS: Prefab = null;
+    private bulletPropM: Prefab = null;
+    private bulletPropH: Prefab = null;
+    private bulletPropS: Prefab = null;
     @property
     public bulletPropSpeed = 0.3;
 
@@ -157,6 +151,12 @@ export class GameManager extends Component {
     private _cameraBase = new Vec3();
     private _shakeTime = 0;
     private _shakeMag = 0;
+
+    // "heavy" subpackage bundle state (WeChat subpackage, loaded at menu time)
+    private _heavyReady = false;
+    private _heavyLoading = false;
+    private _heavyFailed = false;
+    private _heavyWaiters: Array<() => void> = [];
 
 
     start () {
@@ -294,8 +294,10 @@ export class GameManager extends Component {
     public returnMain(){
         this._currShootTime = 0;
         this._bulletType = Constant.BulletPropType.BULLET_M;
-        this.playerPlane.node.setPosition(0, 0, 15);
-        this.playerPlane.node.active = true;
+        if (this.playerPlane) {
+            this.playerPlane.node.setPosition(0, 0, 15);
+            this.playerPlane.node.active = true;
+        }
         this._score = 0;
         this._wave = 0;
         this._waveState = 'idle';
@@ -305,11 +307,24 @@ export class GameManager extends Component {
         if (this._victoryLabel) { this._victoryLabel.node.active = false; }
         if (this._bannerLabel) { this._bannerLabel.node.active = false; }
         if (this._toastLabel) { this._toastLabel.node.active = false; }
-        this.playerPlane.init();
+        if (this.playerPlane) { this.playerPlane.init(); }
         this._refreshBestLabel();
     }
 
     public gameStart(){
+        // Gameplay prefabs live in the "heavy" subpackage bundle. Never
+        // start before they are loaded — starting would instantiate null
+        // prefabs. If the player tapped Start early, wait for the bundle
+        // and start automatically when it arrives.
+        if (!this._heavyReady) {
+            this._showToast('加载中，请稍候…');
+            this.loadHeavyPrefabs(() => { this.gameStart(); });
+            return;
+        }
+        if (!this.playerPlane) {
+            this._showToast('初始化失败，请重试');
+            return;
+        }
         this.isGameStart = true;
         this._score = 0;
         this.gameScore.string = this._score.toString();
@@ -828,10 +843,88 @@ export class GameManager extends Component {
         this._toastTime = 1.5;
     }
 
+    /**
+     * Load the "heavy" Asset Bundle (WeChat subpackage) and all gameplay
+     * prefabs inside it. Safe to call repeatedly: while a load is in
+     * flight the callback is queued; once loaded it fires immediately.
+     * On failure the waiters are dropped (the player taps Start again to
+     * retry) and a toast explains — the game never starts with null
+     * prefabs and never hangs on a slow bundle.
+     */
+    public loadHeavyPrefabs(onDone?: () => void): void {
+        if (this._heavyReady) {
+            if (onDone) { onDone(); }
+            return;
+        }
+        if (onDone) { this._heavyWaiters.push(onDone); }
+        if (this._heavyLoading) { return; }
+        this._heavyLoading = true;
+        this._heavyFailed = false;
+        assetManager.loadBundle('heavy', (err, bundle) => {
+            if (err || !bundle) {
+                this._heavyLoading = false;
+                this._heavyFailed = true;
+                this._heavyWaiters = [];
+                this._showToast('资源加载失败，请重试');
+                return;
+            }
+            const jobs: Array<[string, (p: Prefab) => void]> = [
+                ['bullet01', (p) => { this.bullet01 = p; }],
+                ['bullet02', (p) => { this.bullet02 = p; }],
+                ['bullet03', (p) => { this.bullet03 = p; }],
+                ['bullet04', (p) => { this.bullet04 = p; }],
+                ['bullet05', (p) => { this.bullet05 = p; }],
+                ['enemy01', (p) => { this.enemy01 = p; }],
+                ['enemy02', (p) => { this.enemy02 = p; }],
+                ['explodeSmall', (p) => { this.enemyExplode = p; }],
+                ['propM', (p) => { this.bulletPropM = p; }],
+                ['propH', (p) => { this.bulletPropH = p; }],
+                ['propS', (p) => { this.bulletPropS = p; }],
+            ];
+            let pending = jobs.length;
+            let failed = false;
+            for (const [path, assign] of jobs) {
+                bundle.load(path, Prefab, (err2, prefab) => {
+                    if (err2 || !prefab) { failed = true; }
+                    else { assign(prefab as Prefab); }
+                    if (--pending === 0) {
+                        this._heavyLoading = false;
+                        if (failed) {
+                            this._heavyFailed = true;
+                            this._heavyWaiters = [];
+                            this._showToast('资源加载失败，请重试');
+                            return;
+                        }
+                        this._heavyReady = true;
+                        this._heavyFailed = false;
+                        const waiters = this._heavyWaiters;
+                        this._heavyWaiters = [];
+                        for (const w of waiters) { w(); }
+                    }
+                });
+            }
+        });
+    }
+
     private _init(){
         this._currShootTime = this.shootTime;
-        this.playerPlane.init();
-        this.playerPlane.gameManager = this;
+        // The scene leaves playerPlane unwired (null); resolve it from the
+        // scene — the player plane node is a PrefabInstance in the scene.
+        // (Found while splitting the package: the shipped v1.0.0 would have
+        // crashed on playerPlane.init() at scene start.)
+        if (!this.playerPlane) {
+            const scene = director.getScene();
+            if (scene) {
+                const planes = scene.getComponentsInChildren(SelfPlane);
+                if (planes.length > 0) {
+                    this.playerPlane = planes[0];
+                }
+            }
+        }
+        if (this.playerPlane) {
+            this.playerPlane.init();
+            this.playerPlane.gameManager = this;
+        }
 
         // best score
         const saved = sys.localStorage.getItem(BEST_KEY);
@@ -872,6 +965,10 @@ export class GameManager extends Component {
         this._victoryLabel.node.active = false;
 
         this._refreshHud();
+
+        // Gameplay prefabs live in the "heavy" subpackage bundle; start
+        // loading them now (menu time) so they are ready when play starts.
+        this.loadHeavyPrefabs();
     }
 
     private _destroyAll(){
