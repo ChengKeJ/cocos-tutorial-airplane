@@ -16,13 +16,15 @@
 
 import { _decorator, Camera, Component, Node, Quat, Vec3, director, find, sys } from 'cc';
 import { ItemKind, KartConstants, ROSTER } from './KartConstants';
-import { BOOST_PADS, KartTrack, TrackFrame } from './KartTrack';
+import { KartTrack, TrackFrame } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
 import { KartItems } from './KartItems';
 import { aiSkillOf, computeRubberBand, hash01 } from './KartItemsLogic';
 const { ccclass, property } = _decorator;
 
-const BEST_TIME_KEY = 'kart_best_time';
+const BEST_TIME_KEY = 'kart_best_time'; // 正赛 best (existing key, kept)
+const BEST_TIME_KEY_REV = 'kart_best_time_rev'; // 逆向 best
+const MODE_KEY = 'kart_mode'; // 'fwd' | 'rev', last chosen race direction
 const KART_VERSION = 'v1.0.8';
 const RAD2DEG = 180 / Math.PI;
 
@@ -79,6 +81,10 @@ export class KartGame extends Component {
 
     public state = 'menu'; // menu | countdown | racing | paused | finished
 
+    private _reverse = false;
+    /** True while racing 逆向 (reverse mode: same track, opposite direction). */
+    public get reverseMode(): boolean { return this._reverse; }
+
     private _track: KartTrack = null;
     private _karts: KartState[] = [];
     private _player: KartState = null;
@@ -113,14 +119,34 @@ export class KartGame extends Component {
     }
     public get playerPosition(): number { return this._rankOf(this._player); }
     public get bestTimeMs(): number { return this._bestTime; }
+    /** Best times for both modes, for the menu (0 = none). */
+    public bestTimes(): { fwd: number; rev: number } {
+        const f = sys.localStorage.getItem(BEST_TIME_KEY);
+        const r = sys.localStorage.getItem(BEST_TIME_KEY_REV);
+        return { fwd: f ? parseInt(f, 10) || 0 : 0, rev: r ? parseInt(r, 10) || 0 : 0 };
+    }
+    /** Switch race direction (from the menu) and start in that mode. */
+    public startRaceInMode(reverse: boolean) {
+        this._reverse = reverse;
+        sys.localStorage.setItem(MODE_KEY, reverse ? 'rev' : 'fwd');
+        if (this._track) { this._track.reversed = reverse; }
+        const saved = sys.localStorage.getItem(reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY);
+        this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
+        this.startRace();
+    }
     public get karts(): KartState[] { return this._karts; }
     public get track(): KartTrack { return this._track; }
 
     start() {
-        const saved = sys.localStorage.getItem(BEST_TIME_KEY);
+        // race direction: last chosen mode (default 正赛）; the track maps
+        // race coordinates to the centreline, so the grid / AI / items all
+        // follow the mode without further branches.
+        this._reverse = sys.localStorage.getItem(MODE_KEY) === 'rev';
+        const saved = sys.localStorage.getItem(this._reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY);
         this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
 
         this._track = new KartTrack();
+        this._track.reversed = this._reverse;
         const trackRoot = new Node('trackRoot');
         trackRoot.setParent(this.node);
         this._track.buildWorld(trackRoot);
@@ -543,7 +569,7 @@ export class KartGame extends Component {
                     const ms = Math.round(this._raceTime * 1000);
                     if (this._bestTime === 0 || ms < this._bestTime) {
                         this._bestTime = ms;
-                        sys.localStorage.setItem(BEST_TIME_KEY, String(ms));
+                        sys.localStorage.setItem(this._reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY, String(ms));
                     }
                     if (this.ui) { this.ui.showToast('🏁 完赛！'); }
                 }
@@ -570,18 +596,12 @@ export class KartGame extends Component {
         } else {
             k.oobTime = 0;
         }
-        // boost pads
+        // boost pads (direction-aware: the track mirrors the t-range in reverse)
         if (k.padCooldown > 0) { k.padCooldown -= dt; }
-        else {
-            const t = this._track.wrapS(k.sTotal) / L;
-            for (const pad of BOOST_PADS) {
-                if (t >= pad.t0 && t <= pad.t1 && Math.abs(k.d - pad.lat) < pad.hw) {
-                    k.boostTime = KartConstants.PAD_BOOST_TIME;
-                    k.boostMul = KartConstants.PAD_BOOST_MUL;
-                    k.padCooldown = 2;
-                    break;
-                }
-            }
+        else if (this._track.padBoostAt(k.sTotal, k.d)) {
+            k.boostTime = KartConstants.PAD_BOOST_TIME;
+            k.boostMul = KartConstants.PAD_BOOST_MUL;
+            k.padCooldown = 2;
         }
     }
 
