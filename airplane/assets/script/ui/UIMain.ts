@@ -233,6 +233,10 @@ export class UIMain extends Component {
     }
 
     private _handleTouchStart(touch: Touch) {
+        // Tapping a hall button must not also start the game / move the plane.
+        if (this.gameManager.isHallTouch(touch)) {
+            return;
+        }
         if (!this.gameManager.isGameStart) {
             if (this.gameStart.active) {
                 // first tap anywhere starts the game (menu page is showing)
