@@ -80,6 +80,7 @@ export class KartGame extends Component {
     private _raceTime = 0;
     private _resultsShown = false;
     private _resultsT = 0;
+    private _menuT = 0; // menu backdrop pan clock (raceTime is frozen in menu)
     private _bestTime = 0; // ms, 0 = none
     private _frame: TrackFrame = {
         pos: new Vec3(), tangent: new Vec3(), right: new Vec3(), up: new Vec3(),
@@ -207,6 +208,7 @@ export class KartGame extends Component {
             return;
         }
         if (this.state === 'menu') {
+            this._menuT += dt;
             this._updateCamera(dt, true);
             return;
         }
@@ -586,7 +588,7 @@ export class KartGame extends Component {
         this._track.posAt(s, this._player.d, this._tmpPos);
         const yaw = Math.atan2(frame.tangent.x, frame.tangent.z) - this._player.heading * 0.5;
         const fx = Math.sin(yaw), fz = Math.cos(yaw);
-        const sway = menu ? Math.sin(this._raceTime * 0.2 + 1.2) * 2 : 0;
+        const sway = menu ? Math.sin(this._menuT * 0.15) * 6 : 0;
         const tx = this._tmpPos.x - fx * 11 + sway;
         const ty = this._tmpPos.y + 4.2;
         const tz = this._tmpPos.z - fz * 11;
