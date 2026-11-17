@@ -3,8 +3,8 @@
  *
  * NO 'cc' import here on purpose: this module is unit-testable in plain
  * node (tsc -> node assertions), while the Cocos glue lives in
- * KartItems.ts. Every number is ported from the kart-royale design spec
- * (ChengKeJ/kart-royale, MIT): Items.ts (odds table, roll, ARM_TIME,
+ * KartItems.ts. Every number is ported from the Three.js kart design spec
+ * (MIT-licensed reference implementation): Items.ts (odds table, roll, ARM_TIME,
  * MUSHROOM_BOOST/STRENGTH, STAR_TIME) and AI.ts (skill formula, rubber
  * band ASSIST_CATCHUP/LEASH, item spend decisions).
  */
