@@ -12,12 +12,23 @@ const { ccclass, property } = _decorator;
  * URL = db://assets/script/framework/Constant.ts
  * ManualUrl = https://docs.cocos.com/creator/3.3/manual/en/
  *
+ * Upgraded for Star Fighter v1.0.0 (2026-11-17):
+ * - 4 enemy types + boss, 3 movement modes, 3 prop kinds, 5 waves.
  */
 
 export class Constant{
     public static EnemyType = {
-        TYPE1: 1,
-        TYPE2: 2,
+        TYPE1: 1, // straight diver (plane02 model)
+        TYPE2: 2, // sine-wave mover (plane03 model)
+        TYPE3: 3, // tanky slow (plane02 model, big scale, multi HP)
+        TYPE4: 4, // fast small dart (plane03 model, small scale)
+        BOSS: 5,  // wave-5 boss (plane03 model, huge scale)
+    };
+
+    public static MoveMode = {
+        STRAIGHT: 1,
+        SINE: 2,
+        DIVE: 3, // drifts toward the player's x while advancing
     };
 
     public static Combination = {
@@ -40,10 +51,27 @@ export class Constant{
         BULLET_S: 3,
     }
 
+    public static PropKind = {
+        BULLET: 1, // random M/H/S bullet upgrade
+        SHIELD: 2, // 8s invulnerability
+        BOMB: 3,   // +1 bomb stock (clears the screen)
+    }
+
     public static Direction = {
         LEFT: 1,
         MIDDLE: 2,
         RIGHT: 3,
+    }
+
+    public static Wave = {
+        COUNT: 5,
+        BOSS_WAVE: 5,
+    }
+
+    public static Score = {
+        KILL_SMALL: 10,
+        KILL_TANKY: 30,
+        KILL_BOSS: 500,
     }
 }
 

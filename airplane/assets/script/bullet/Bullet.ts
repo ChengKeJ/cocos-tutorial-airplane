@@ -14,6 +14,9 @@ const { ccclass, property } = _decorator;
  * URL = db://assets/script/bullet/Bullet.ts
  * ManualUrl = https://docs.cocos.com/creator/3.3/manual/en/
  *
+ * Upgraded for Star Fighter v1.0.0 (2026-11-17):
+ * - Enemy bullets now drift sideways on LEFT/RIGHT (boss spread shots).
+ * - isEnemyBullet() getter so GameManager can clear enemy bullets (bomb / respawn).
  */
 
 @ccclass('Bullet')
@@ -37,7 +40,14 @@ export class Bullet extends Component {
         let moveLength = 0;
         if (this._isEnemyBullet) {
             moveLength = pos.z + this._bulletSpeed;
-            this.node.setPosition(pos.x, pos.y, moveLength);
+            // boss spread shots drift sideways (same LEFT/RIGHT convention as player bullets)
+            if (this._direction === Constant.Direction.LEFT) {
+                this.node.setPosition(pos.x - this._bulletSpeed * 0.2, pos.y, moveLength);
+            } else if (this._direction === Constant.Direction.RIGHT) {
+                this.node.setPosition(pos.x + this._bulletSpeed * 0.2, pos.y, moveLength);
+            } else {
+                this.node.setPosition(pos.x, pos.y, moveLength);
+            }
             if (moveLength > 50) {
                 // this.node.destroy();
                 PoolManager.instance().putNode(this.node);
@@ -65,6 +75,10 @@ export class Bullet extends Component {
         this._bulletSpeed = speed;
         this._isEnemyBullet = isEnemyBullet;
         this._direction = direction;
+    }
+
+    public isEnemyBullet(): boolean {
+        return this._isEnemyBullet;
     }
 
     private _onTriggerEnter(event: ITriggerEvent){

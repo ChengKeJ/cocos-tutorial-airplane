@@ -1,6 +1,7 @@
 
 import { _decorator, Component, Node, Collider, ITriggerEvent, AudioSource } from 'cc';
 import { Constant } from '../framework/Constant';
+import { GameManager } from '../framework/GameManager';
 const { ccclass, property } = _decorator;
 
 /**
@@ -13,8 +14,11 @@ const { ccclass, property } = _decorator;
  * URL = db://assets/script/SelfPlane.ts
  * ManualUrl = https://docs.cocos.com/creator/3.3/manual/en/
  *
+ * Upgraded for Star Fighter v1.0.0 (2026-11-17):
+ * - HP is per-life (lifeValue hits); lives are owned by GameManager (3 lives).
+ * - Hits are routed to GameManager.onPlayerHit(), which owns shield /
+ *   invulnerability / lives / respawn, so this class only renders HP + death.
  */
-
 
 @ccclass('SelfPlane')
 export class SelfPlane extends Component {
@@ -26,6 +30,9 @@ export class SelfPlane extends Component {
     public blood: Node = null;
     public lifeValue = 5;
     public isDie = false;
+
+    // set by GameManager at start (scene wires playerPlane -> GameManager, not the reverse)
+    public gameManager: GameManager = null;
 
     private _currLife = 0;
     private _audioEffect: AudioSource = null;
@@ -56,6 +63,37 @@ export class SelfPlane extends Component {
         this.bloodFace.setScale(1, 1, 1);
     }
 
+    /** Full HP for the current life (used on respawn). */
+    public resetLife(){
+        this._currLife = this.lifeValue;
+        this.isDie = false;
+        this.explode.active = false;
+        this.bloodFace.setScale(1, 1, 1);
+    }
+
+    /** Apply one hit. Returns remaining HP (0 = this life is spent). */
+    public damage(): number {
+        if (this._currLife === this.lifeValue) {
+            this.blood.active = true;
+        }
+        this._currLife--;
+        this.bloodFace.setScale(Math.max(this._currLife, 0) / this.lifeValue, 1, 1);
+        return this._currLife;
+    }
+
+    public get currLife(): number {
+        return this._currLife;
+    }
+
+    /** Final death: explosion + hide the blood bar. */
+    public die(){
+        this.isDie = true;
+        this._audioEffect.play();
+        this.explode.active = true;
+        this.blood.active = false;
+        console.log('self plane is die');
+    }
+
     private _onTriggerEnter(event: ITriggerEvent){
         // some trick to fix "trigger vs trigger problem" in physx
         if(event.otherCollider.material.friction == 100){
@@ -64,17 +102,8 @@ export class SelfPlane extends Component {
 
         const collisionGroup = event.otherCollider.getGroup();
         if(collisionGroup === Constant.CollisionType.ENEMY_PLANE || collisionGroup === Constant.CollisionType.ENEMY_BULLET){
-            if(this._currLife === this.lifeValue){
-                this.blood.active = true;
-            }
-            this._currLife --;
-            this.bloodFace.setScale(this._currLife / this.lifeValue, 1, 1);
-            if(this._currLife <=0){
-                this.isDie = true;
-                this._audioEffect.play();
-                this.explode.active = true;
-                this.blood.active = false;
-                console.log('self plane is die');
+            if (this.gameManager) {
+                this.gameManager.onPlayerHit();
             }
         }
     }

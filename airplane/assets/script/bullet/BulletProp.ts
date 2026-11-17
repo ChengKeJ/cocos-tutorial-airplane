@@ -15,6 +15,10 @@ const { ccclass, property } = _decorator;
  * URL = db://assets/script/bullet/BulletProp.ts
  * ManualUrl = https://docs.cocos.com/creator/3.3/manual/en/
  *
+ * Upgraded for Star Fighter v1.0.0 (2026-11-17):
+ * - Prop kinds: BULLET (random M/H/S upgrade, as before), SHIELD (8s invulnerable),
+ *   BOMB (+1 bomb stock). The kind is set by GameManager at spawn time, so the
+ *   same three prop prefabs can carry any kind.
  */
 
 @ccclass('BulletProp')
@@ -22,6 +26,7 @@ export class BulletProp extends Component {
     private _propSpeed = 0.3;
     private _propXSpeed = 0.3;
     private _gameManager: GameManager = null;
+    private _kind = Constant.PropKind.BULLET;
 
     onEnable () {
         const collider = this.getComponent(Collider);
@@ -49,19 +54,26 @@ export class BulletProp extends Component {
         }
     }
 
-    show(gameManager: GameManager, speed: number){
+    show(gameManager: GameManager, speed: number, kind: number = Constant.PropKind.BULLET){
         this._gameManager = gameManager;
         this._propSpeed = speed;
+        this._kind = kind;
     }
 
     private _onTriggerEnter(event: ITriggerEvent){
-        const name = event.selfCollider.node.name;
-        if(name === 'bulletH'){
-            this._gameManager.changeBulletType(Constant.BulletPropType.BULLET_H);
-        } else if (name === 'bulletS') {
-            this._gameManager.changeBulletType(Constant.BulletPropType.BULLET_S);
+        if (this._kind === Constant.PropKind.SHIELD) {
+            this._gameManager.grantShield();
+        } else if (this._kind === Constant.PropKind.BOMB) {
+            this._gameManager.grantBomb();
         } else {
-            this._gameManager.changeBulletType(Constant.BulletPropType.BULLET_M);
+            const name = event.selfCollider.node.name;
+            if(name === 'bulletH'){
+                this._gameManager.changeBulletType(Constant.BulletPropType.BULLET_H);
+            } else if (name === 'bulletS') {
+                this._gameManager.changeBulletType(Constant.BulletPropType.BULLET_S);
+            } else {
+                this._gameManager.changeBulletType(Constant.BulletPropType.BULLET_M);
+            }
         }
 
         // this.node.destroy();
