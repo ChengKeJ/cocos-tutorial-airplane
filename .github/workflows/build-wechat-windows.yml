@@ -133,13 +133,28 @@ jobs:
         run: |
           $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
           $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
-          $proc = Start-Process -FilePath $exe -ArgumentList @('--project', "$ws/airplane", '--build', "stage=build;configPath=$ws/airplane/build-configs/wechatgame.json;") -Wait -NoNewWindow -PassThru
-          $creatorStatus = $proc.ExitCode
-          switch ($creatorStatus) {
-            36 { Write-Host 'Cocos Creator wechatgame build succeeded (exit 36).' }
-            32 { Write-Error 'Cocos Creator rejected the build parameters (exit 32).'; exit 32 }
-            34 { Write-Error 'Cocos Creator reported a build failure (exit 34).'; exit 34 }
-            default { Write-Error "Unexpected Cocos Creator exit code: $creatorStatus"; exit 1 }
+          $log = Join-Path $env:RUNNER_TEMP 'creator-wechatgame.log'
+          $errLog = Join-Path $env:RUNNER_TEMP 'creator-wechatgame.err.log'
+          $proc = Start-Process -FilePath $exe -ArgumentList @('--project', "$ws/airplane", '--build', "stage=build;configPath=$ws/airplane/build-configs/wechatgame.json;") -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog
+          # The Creator process does not exit after finishing the build, so
+          # do not wait on it. Poll the log for the completion marker and
+          # kill the lingering process once the build is done.
+          $completed = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 10
+            if ($proc.HasExited) { break }
+            if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'Finished in \(' -Quiet)) { $completed = $true; break }
+          }
+          if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'Finished in \(' -Quiet)) { $completed = $true }
+          if ($proc.HasExited -and $proc.ExitCode -eq 36) { $completed = $true }
+          if (-not $proc.HasExited) { Stop-Process -Force -Id $proc.Id }
+          if ($completed) {
+            Write-Host 'Cocos Creator wechatgame build succeeded.'
+          } else {
+            Write-Host 'Cocos Creator wechatgame build did not complete; last 40 lines of log:'
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            if (Test-Path $errLog) { Get-Content $errLog -Tail 40 }
+            exit 1
           }
 
       - name: Report build size
@@ -171,13 +186,28 @@ jobs:
         run: |
           $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
           $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
-          $proc = Start-Process -FilePath $exe -ArgumentList @('--project', "$ws/airplane", '--build', "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=c69a7c48-3e23-42e1-83c4-c82a8d0d98ff;webOrientation=portrait;") -Wait -NoNewWindow -PassThru
-          $creatorStatus = $proc.ExitCode
-          switch ($creatorStatus) {
-            36 { Write-Host 'Cocos Creator web-mobile build succeeded (exit 36).' }
-            32 { Write-Error 'Cocos Creator rejected the build parameters (exit 32).'; exit 32 }
-            34 { Write-Error 'Cocos Creator reported a build failure (exit 34).'; exit 34 }
-            default { Write-Error "Unexpected Cocos Creator exit code: $creatorStatus"; exit 1 }
+          $log = Join-Path $env:RUNNER_TEMP 'creator-webmobile.log'
+          $errLog = Join-Path $env:RUNNER_TEMP 'creator-webmobile.err.log'
+          $proc = Start-Process -FilePath $exe -ArgumentList @('--project', "$ws/airplane", '--build', "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=c69a7c48-3e23-42e1-83c4-c82a8d0d98ff;webOrientation=portrait;") -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog
+          # The Creator process does not exit after finishing the build, so
+          # do not wait on it. Poll the log for the completion marker and
+          # kill the lingering process once the build is done.
+          $completed = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 10
+            if ($proc.HasExited) { break }
+            if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'Finished in \(' -Quiet)) { $completed = $true; break }
+          }
+          if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'Finished in \(' -Quiet)) { $completed = $true }
+          if ($proc.HasExited -and $proc.ExitCode -eq 36) { $completed = $true }
+          if (-not $proc.HasExited) { Stop-Process -Force -Id $proc.Id }
+          if ($completed) {
+            Write-Host 'Cocos Creator web-mobile build succeeded.'
+          } else {
+            Write-Host 'Cocos Creator web-mobile build did not complete; last 40 lines of log:'
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            if (Test-Path $errLog) { Get-Content $errLog -Tail 40 }
+            exit 1
           }
 
       - name: Upload web-mobile artifact
