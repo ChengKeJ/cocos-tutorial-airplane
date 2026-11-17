@@ -2,7 +2,10 @@ name: Build WeChat Mini Game
 
 # Builds the Cocos Creator 3.8.8 project (airplane/) for the WeChat Mini Game
 # platform on a GitHub-hosted macOS runner and uploads the wechatgame output
-# as an artifact. No secrets are needed: the build is fully offline and the
+# as an artifact. The same job also builds web-mobile (same code, same
+# engine) so the game can be playtested in a browser before any trial
+# version is handed to the user — the user tests nothing himself.
+# No secrets are needed: the builds are fully offline and the
 # AppID is the public mini-game AppID (wx259411cbfcbbaa3f).
 #
 # Cocos Creator has no Linux editor, so this runs on macOS. The editor is
@@ -141,6 +144,43 @@ jobs:
         with:
           name: wechatgame-${{ github.run_id }}-${{ github.run_attempt }}
           path: airplane/build/wechatgame
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Build web-mobile (for browser playtesting)
+        shell: bash
+        run: |
+          set +e
+          COCOS_CREATOR_BIN="$RUNNER_TEMP/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator"
+          "$COCOS_CREATOR_BIN" \
+            --project "$GITHUB_WORKSPACE/airplane" \
+            --build "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=1078973b-67f7-4366-8a61-e2ddd39429c8;webOrientation=portrait;"
+          creator_status=$?
+          set -e
+          case "$creator_status" in
+            36)
+              printf 'Cocos Creator web-mobile build succeeded (exit 36).\n'
+              ;;
+            32)
+              printf 'Cocos Creator rejected the build parameters (exit 32).\n' >&2
+              exit 32
+              ;;
+            34)
+              printf 'Cocos Creator reported a build failure (exit 34).\n' >&2
+              exit 34
+              ;;
+            *)
+              printf 'Unexpected Cocos Creator exit code: %s\n' "$creator_status" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload web-mobile artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-mobile-${{ github.run_id }}-${{ github.run_attempt }}
+          path: airplane/build/web-mobile
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
