@@ -68,7 +68,10 @@ const ELITE_TYPE_OFFSET = 10; // elite of base type N reports as type N+10
 // Build version, stamped to the console at startup (nothing on screen)
 // so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.7';
+const GAME_VERSION = 'v1.0.8';
+// The hall scene's name (director.loadScene takes the scene NAME, not UUID
+// — see UIHall.ts; the plane scene's name is 'airplane', the hall's 'hall').
+const HALL_SCENE_NAME = 'hall';
 
 @ccclass('GameManager')
 export class GameManager extends Component {
@@ -171,6 +174,11 @@ export class GameManager extends Component {
     private _livesLabel: Label = null;
     private _waveLabel: Label = null;
     private _bombLabel: Label = null;
+    // Hall buttons (v1.0.8): HUD corner button (in-game) + menu button
+    // (gameStart page). The plane scene previously had NO way back to
+    // the hall — returnMain() only resets the plane to its own menu.
+    private _hallHudBtn: Node | null = null;
+    private _hallMenuBtn: Node | null = null;
     private _bannerLabel: Label = null;
     private _toastLabel: Label = null;
     private _bossLabel: Label = null;
@@ -1081,6 +1089,31 @@ export class GameManager extends Component {
         return label;
     }
 
+    /**
+     * A tappable text button on a HUD page — same shape as the bomb button
+     * (Node + UITransform + Label, touch handled on the node itself).
+     * Tapping it loads the hall scene.
+     */
+    private _makeHallButton(parent: Node, name: string, x: number, y: number, label: string): Node {
+        const node = new Node(name);
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        node.setPosition(x, y, 0);
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(150, 70);
+        const lab = node.addComponent(Label);
+        lab.fontSize = 30;
+        lab.color = new Color(255, 255, 255, 255);
+        lab.string = label;
+        node.on(Node.EventType.TOUCH_START, this._goToHall, this);
+        return node;
+    }
+
+    /** Leave the plane scene for the game hall. */
+    private _goToHall() {
+        director.loadScene(HALL_SCENE_NAME);
+    }
+
     private _refreshHud(){
         if (this._livesLabel) {
             let hearts = '';
@@ -1105,10 +1138,25 @@ export class GameManager extends Component {
 
     /** True when the touch lands on the bomb button (so a tap there must not also move the plane). */
     public isBombTouch(touch: Touch): boolean {
-        if (!this._bombLabel) {
+        return this._hitTestNode(touch, this._bombLabel ? this._bombLabel.node : null);
+    }
+
+    /** True when the touch lands on either hall button (HUD or menu page). */
+    public isHallTouch(touch: Touch): boolean {
+        return this._hitTestNode(touch, this._hallHudBtn)
+            || this._hitTestNode(touch, this._hallMenuBtn);
+    }
+
+    /**
+     * UI-space hit test of one node. A node whose page is hidden never
+     * matches: its parent page (game / gameStart) is inactive then, so
+     * the button must not swallow taps meant for the other page.
+     */
+    private _hitTestNode(touch: Touch, node: Node | null): boolean {
+        if (!node || !node.active || !node.parent || !node.parent.active) {
             return false;
         }
-        const t = this._bombLabel.node.getComponent(UITransform);
+        const t = node.getComponent(UITransform);
         if (!t) {
             return false;
         }
@@ -1235,6 +1283,8 @@ export class GameManager extends Component {
         const bombTransform = this._bombLabel.node.getComponent(UITransform);
         if (bombTransform) { bombTransform.setContentSize(150, 70); }
         this._bombLabel.node.on(Node.EventType.TOUCH_START, this.useBomb, this);
+        // Hall button, bottom-left (mirrors the bomb button bottom-right).
+        this._hallHudBtn = this._makeHallButton(this.gamePage, 'hudHall', -300, -560, '🏠 大厅');
         this._bannerLabel = this._makeHudLabel('hudBanner', this.gamePage, 0, 100, 56, gold);
         this._bannerLabel.node.active = false;
         this._toastLabel = this._makeHudLabel('hudToast', this.gamePage, 0, -100, 28, white);
@@ -1279,6 +1329,8 @@ export class GameManager extends Component {
         if (this.gameStartPage) {
             this._bestLabel = this._makeHudLabel('hudBest', this.gameStartPage, 0, -420, 24, gold);
             this._refreshBestLabel();
+            // Hall button on the menu page, below the best-score label.
+            this._hallMenuBtn = this._makeHallButton(this.gameStartPage, 'menuHall', 0, -520, '🏠 回大厅');
         }
 
         // victory label on the game-over page
