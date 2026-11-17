@@ -52,7 +52,7 @@ const SHIELD_SECONDS = 8;
 // Build version, shown on the menu (bottom corner) and in the menu status
 // line, so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.2';
+const GAME_VERSION = 'v1.0.3';
 
 @ccclass('GameManager')
 export class GameManager extends Component {

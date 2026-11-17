@@ -379,8 +379,17 @@ export class UIMain extends Component {
             return;
         }
         try {
-            const w = this._mainCamera.width;
-            const h = this._mainCamera.height;
+            // NOTE (v1.0.3): the Camera COMPONENT has no width/height in
+            // Cocos 3.8.8 (both are undefined) — the old code read them and
+            // calibration failed on every touch ('相机尺寸为0'), so absolute
+            // drag never engaged and the game always fell back to
+            // speed-scaled delta drag. The RENDER camera underneath
+            // (_mainCamera.camera) carries the real pixel size
+            // (780x1688 here = view canvas size = the device-pixel space
+            // touch.getLocation() reports in).
+            const rc = (this._mainCamera as any).camera;
+            const w = (rc && rc.width) || 0;
+            const h = (rc && rc.height) || 0;
             if (!w || !h) {
                 this._absFailReason = '相机尺寸为0';
                 return;
