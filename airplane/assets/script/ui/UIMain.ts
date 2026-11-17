@@ -19,6 +19,10 @@ const { ccclass, property } = _decorator;
  *   the plane. Movement is clamped to the playfield.
  * - Keyboard (desktop testing): arrows/WASD move, Space = bomb, Enter/Space starts.
  *
+ * v1.0.7 (2026-11-17): while the wave-clear choice screen is open,
+ * touch movement is frozen (a choice tap must not yank the plane) and
+ * keys 1/2/3 pick an upgrade.
+ *
  * Drag fix v2 (2026-11-17, user reported 还是不行 on the trial build):
  * - ROOT CAUSE FOUND (verified against the Cocos 3.8.0 engine source):
  *   the a0dde3b2 fix called screenToWorld with the RENDER-scene camera's
@@ -247,6 +251,11 @@ export class UIMain extends Component {
             }
             return;
         }
+        // While the wave-clear choice screen is open, taps pick an upgrade
+        // (the option nodes handle them) and must not move the plane.
+        if (this.gameManager.isChoiceOpen()) {
+            return;
+        }
         // Tapping the bomb button must not also yank the plane to the corner.
         if (this.gameManager.isBombTouch(touch)) {
             return;
@@ -257,6 +266,9 @@ export class UIMain extends Component {
 
     private _handleTouchMove(touch: Touch) {
         if (!this.gameManager.isGameStart) {
+            return;
+        }
+        if (this.gameManager.isChoiceOpen()) {
             return;
         }
         // Both channels deliver the same move event; process it once.
@@ -419,6 +431,16 @@ export class UIMain extends Component {
                 this.game.active = true;
                 this.gameManager.playAudioEffect('button');
                 this.gameManager.gameStart();
+            }
+            return;
+        }
+        if (this.gameManager.isChoiceOpen()) {
+            if (code === KeyCode.DIGIT_1) {
+                this.gameManager.applyChoice(0);
+            } else if (code === KeyCode.DIGIT_2) {
+                this.gameManager.applyChoice(1);
+            } else if (code === KeyCode.DIGIT_3) {
+                this.gameManager.applyChoice(2);
             }
             return;
         }
