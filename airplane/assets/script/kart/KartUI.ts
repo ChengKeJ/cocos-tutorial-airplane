@@ -146,9 +146,11 @@ export class KartUI extends Component {
         if (show) {
             this.showHud(false);
             if (this._menuBestLabel && this._game) {
-                const best = this._game.bestTimeMs;
-                this._menuBestLabel.string = best > 0
-                    ? '最佳成绩 ' + fmtTime(best / 1000)
+                const b = this._game.bestTimes();
+                const f = b.fwd > 0 ? fmtTime(b.fwd / 1000) : '——';
+                const r = b.rev > 0 ? fmtTime(b.rev / 1000) : '——';
+                this._menuBestLabel.string = (b.fwd > 0 || b.rev > 0)
+                    ? '正赛最佳 ' + f + ' · 逆向最佳 ' + r
                     : '暂无成绩，来跑第一圈！';
             }
         }
@@ -208,7 +210,7 @@ export class KartUI extends Component {
         }
         if (this._lapLabel) {
             const lap = Math.min(3, this._game.playerLap);
-            this._lapLabel.string = '第 ' + lap + '/3 圈';
+            this._lapLabel.string = '第 ' + lap + '/3 圈' + (this._game.reverseMode ? ' · 逆向' : '');
         }
         if (this._timeLabel) { this._timeLabel.string = fmtTime(this._game.raceTime); }
         if (this._speedLabel) { this._speedLabel.string = this._game.playerSpeedKmh + ' km/h'; }
@@ -432,12 +434,16 @@ export class KartUI extends Component {
         menu.active = false;
         this._makeLabel(menu, 'title', 0, 300, 72, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 220, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
-        this._menuBestLabel = this._makeLabel(menu, 'best', 0, 120, 28, GOLD, '');
-        this._makeButton(menu, 'startBtn', 0, -40, 480, 110, '开始比赛', 44,
-            new Color(30, 120, 220, 255), () => { if (this._game) { this._game.startRace(); } });
-        this._makeButton(menu, 'hallBtn', 0, -180, 480, 110, '回大厅', 40,
+        this._menuBestLabel = this._makeLabel(menu, 'best', 0, 130, 28, GOLD, '');
+        // mode select: 正赛 drives the circuit forward, 逆向 drives the
+        // same 1606 m the other way (reversed checkpoints / racing line).
+        this._makeButton(menu, 'startFwdBtn', 0, 0, 480, 100, '🏁 正赛开始', 42,
+            new Color(30, 120, 220, 255), () => { if (this._game) { this._game.startRaceInMode(false); } });
+        this._makeButton(menu, 'startRevBtn', 0, -120, 480, 100, '🔄 逆向开始', 42,
+            new Color(150, 80, 200, 255), () => { if (this._game) { this._game.startRaceInMode(true); } });
+        this._makeButton(menu, 'hallBtn', 0, -240, 480, 100, '回大厅', 40,
             new Color(90, 100, 120, 255), () => { if (this._game) { this._game.quitToHall(); } });
-        this._makeLabel(menu, 'hint', 0, -320, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
+        this._makeLabel(menu, 'hint', 0, -340, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
 
         // --- results ---
         const res = new Node('kartResults');
