@@ -1,11 +1,11 @@
 /**
  * Kart tuning + roster for the Star Fighter hall kart game （飞车狂飙）.
  *
- * Numbers are taken from the kart-royale design spec (ChengKeJ/kart-royale,
- * MIT, ryancampbell/kart-royale upstream): BASE_TOP_SPEED 30 m/s, drift
+ * Numbers are taken from the Three.js kart design spec (MIT-licensed
+ * reference implementation): BASE_TOP_SPEED 30 m/s, drift
  * tiers / boost tables, position-based item odds, roster stat multipliers.
  * The roster names, colours and all UI text are OUR OWN (divergence pass):
- * never ship the upstream "Kart Royale" names or identity.
+ * never ship the reference game's names or identity.
  *
  * The physics here is an arcade spline model, not the original's
  * raycast-suspension model: a kart's state is (s = metres along the
