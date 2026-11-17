@@ -119,7 +119,12 @@ export class UIMain extends Component {
         input.off(Input.EventType.TOUCH_CANCEL, this._inputTouchEnd, this);
         input.off(Input.EventType.KEY_DOWN, this._keyDown, this);
         input.off(Input.EventType.KEY_UP, this._keyUp, this);
-        if (this.game) {
+        // Scene teardown destroys the Canvas's children (incl. the game
+        // page) before the Canvas's own components, so by the time this
+        // runs the game node may already be destroyed — off() on a
+        // destroyed node throws (its event processor is gone). The node
+        // is gone either way, so there is nothing left to unsubscribe.
+        if (this.game && (this.game as any).isValid) {
             this.game.off(Node.EventType.TOUCH_START, this._nodeTouchStart, this);
             this.game.off(Node.EventType.TOUCH_MOVE, this._nodeTouchMove, this);
             this.game.off(Node.EventType.TOUCH_END, this._nodeTouchEnd, this);
