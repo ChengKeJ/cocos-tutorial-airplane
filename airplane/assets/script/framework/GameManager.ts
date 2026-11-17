@@ -1,5 +1,5 @@
 
-import { _decorator, Component, Node, Prefab, math, Vec3, BoxCollider, Label, Animation, sys, find, UITransform, Color, assetManager, director, Touch } from 'cc';
+import { _decorator, Component, Node, Prefab, math, Vec3, BoxCollider, Label, Animation, sys, find, UITransform, Color, assetManager, director, Touch, Layers } from 'cc';
 import { Bullet } from '../bullet/Bullet';
 import { BulletProp } from '../bullet/BulletProp';
 import { EnemyPlane } from '../plane/EnemyPlane';
@@ -1066,6 +1066,11 @@ export class GameManager extends Component {
 
     private _makeHudLabel(name: string, parent: Node, x: number, y: number, fontSize: number, color: Color): Label {
         const node = new Node(name);
+        // Runtime-created nodes default to the DEFAULT layer, which the UI
+        // camera never renders (it only sees UI_2D/UI_3D) — every runtime
+        // HUD label since v1.0.0 was invisible and untappable for this
+        // reason. Scene-wired labels carry UI_2D in the scene file.
+        node.layer = Layers.Enum.UI_2D;
         node.setParent(parent);
         node.setPosition(x, y, 0);
         const label = node.addComponent(Label);
@@ -1240,9 +1245,11 @@ export class GameManager extends Component {
 
         // wave-clear choice panel (hidden until a wave clears)
         this._choicePanel = new Node('choicePanel');
+        this._choicePanel.layer = Layers.Enum.UI_2D;
         this._choicePanel.setParent(this.gamePage);
         this._choicePanel.setPosition(0, 0, 0);
         const choiceTitle = new Node('choiceTitle');
+        choiceTitle.layer = Layers.Enum.UI_2D;
         choiceTitle.setParent(this._choicePanel);
         choiceTitle.setPosition(0, 180, 0);
         const choiceTitleLabel = choiceTitle.addComponent(Label);
@@ -1252,6 +1259,7 @@ export class GameManager extends Component {
         this._choiceOptionLabels = [];
         for (let i = 0; i < 3; i++) {
             const opt = new Node('choiceOpt' + i);
+            opt.layer = Layers.Enum.UI_2D;
             opt.setParent(this._choicePanel);
             opt.setPosition(0, 60 - i * 110, 0);
             const transform = opt.addComponent(UITransform);
