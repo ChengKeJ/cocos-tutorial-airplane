@@ -52,7 +52,7 @@ const SHIELD_SECONDS = 8;
 // Build version, stamped to the console at startup (nothing on screen)
 // so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.5';
+const GAME_VERSION = 'v1.0.6';
 
 @ccclass('GameManager')
 export class GameManager extends Component {
@@ -117,6 +117,9 @@ export class GameManager extends Component {
     private _currShootTime = 0;
     private _isShooting = false;
     private _bulletType = Constant.BulletPropType.BULLET_M;
+    // Weapon level 1-3 (v1.0.6 stacking): picking up the same bullet prop
+    // type again raises the level; a different type switches at level 1.
+    private _weaponLevel = 1;
     private _score = 0;
     private _best = 0;
 
@@ -260,9 +263,9 @@ export class GameManager extends Component {
             }
         }
 
-        // --- scheduled prop drop (one free bullet prop every 18s) ---
+        // --- scheduled prop drop (one free bullet prop every 12s) ---
         this._propTimer += deltaTime;
-        if (this._propTimer > 18) {
+        if (this._propTimer > 12) {
             this._propTimer = 0;
             this.createBulletProp(Constant.PropKind.BULLET);
         }
@@ -298,7 +301,7 @@ export class GameManager extends Component {
 
     public returnMain(){
         this._currShootTime = 0;
-        this._bulletType = Constant.BulletPropType.BULLET_M;
+        this._resetWeapon();
         if (this.playerPlane) {
             this.playerPlane.node.setPosition(0, 0, 15);
             this.playerPlane.node.active = true;
@@ -333,7 +336,7 @@ export class GameManager extends Component {
         this.isGameStart = true;
         this._score = 0;
         this.gameScore.string = this._score.toString();
-        this._bulletType = Constant.BulletPropType.BULLET_M;
+        this._resetWeapon();
         this._currShootTime = this.shootTime;
         this._lives = 3;
         this._bombs = 1;
@@ -442,6 +445,7 @@ export class GameManager extends Component {
         this.shake(0.6, 0.35);
         if (hpLeft <= 0) {
             this._lives--;
+            this._resetWeapon();
             this._refreshHud();
             if (this._lives > 0) {
                 // respawn with fresh HP + 2s invulnerability, screen cleared of bullets
@@ -453,6 +457,9 @@ export class GameManager extends Component {
             } else {
                 this.playerPlane.die();
             }
+        } else {
+            // survived the hit — weapon drops one level
+            this._weaponLevel = Math.max(1, this._weaponLevel - 1);
         }
     }
 
@@ -524,55 +531,49 @@ export class GameManager extends Component {
 
     // ---------- player bullets ----------
 
-    public createPlayerBulletM(){
-        const bullet = PoolManager.instance().getNode(this.bullet01, this.bulletRoot);
+    private _spawnPlayerBullet(prefab: Prefab, offsetX: number, direction: number = Constant.Direction.MIDDLE){
+        const bullet = PoolManager.instance().getNode(prefab, this.bulletRoot);
         const pos = this.playerPlane.node.position;
-        bullet.setPosition(pos.x, pos.y, pos.z - 7);
-        const bulletComp = bullet.getComponent(Bullet);
-        bulletComp.show(this.bulletSpeed, false);
+        bullet.setPosition(pos.x + offsetX, pos.y, pos.z - 7);
+        bullet.getComponent(Bullet).show(this.bulletSpeed, false, direction);
+    }
+
+    public createPlayerBulletM(){
+        // Lv1: 1 shot; Lv2: 2 parallel; Lv3: 3 parallel.
+        const offs = this._weaponLevel >= 3 ? [-5, 0, 5]
+            : this._weaponLevel >= 2 ? [-2.5, 2.5] : [0];
+        for (const off of offs) {
+            this._spawnPlayerBullet(this.bullet01, off);
+        }
     }
 
     public createPlayerBulletH(){
-        const pos = this.playerPlane.node.position;
-        // left
-        // const bullet1 = instantiate(this.bullet03);
-        const bullet1 = PoolManager.instance().getNode(this.bullet03, this.bulletRoot);
-        // bullet1.setParent(this.bulletRoot);
-        bullet1.setPosition(pos.x - 2.5, pos.y, pos.z - 7);
-        const bulletComp1 = bullet1.getComponent(Bullet);
-        bulletComp1.show(this.bulletSpeed, false);
-
-        // right
-        const bullet2 = PoolManager.instance().getNode(this.bullet03, this.bulletRoot);
-        // bullet2.setParent(this.bulletRoot);
-        bullet2.setPosition(pos.x + 2.5, pos.y, pos.z - 7);
-        const bulletComp2 = bullet2.getComponent(Bullet);
-        bulletComp2.show(this.bulletSpeed, false);
+        // Lv1: 2 shots; Lv2: 3 shots; Lv3: 4 shots, outer pair angled out.
+        if (this._weaponLevel >= 3) {
+            this._spawnPlayerBullet(this.bullet03, -7.5, Constant.Direction.LEFT);
+            this._spawnPlayerBullet(this.bullet03, -2.5);
+            this._spawnPlayerBullet(this.bullet03, 2.5);
+            this._spawnPlayerBullet(this.bullet03, 7.5, Constant.Direction.RIGHT);
+        } else if (this._weaponLevel >= 2) {
+            this._spawnPlayerBullet(this.bullet03, -5);
+            this._spawnPlayerBullet(this.bullet03, 0);
+            this._spawnPlayerBullet(this.bullet03, 5);
+        } else {
+            this._spawnPlayerBullet(this.bullet03, -2.5);
+            this._spawnPlayerBullet(this.bullet03, 2.5);
+        }
     }
 
     public createPlayerBulletS(){
-        const pos = this.playerPlane.node.position;
-        // middle
-        // const bullet = instantiate(this.bullet05);
-        const bullet = PoolManager.instance().getNode(this.bullet05, this.bulletRoot);
-        // bullet.setParent(this.bulletRoot);
-        bullet.setPosition(pos.x, pos.y, pos.z - 7);
-        const bulletComp = bullet.getComponent(Bullet);
-        bulletComp.show(this.bulletSpeed, false);
-
-        // left
-        const bullet1 = PoolManager.instance().getNode(this.bullet05, this.bulletRoot);
-        // bullet1.setParent(this.bulletRoot);
-        bullet1.setPosition(pos.x - 4, pos.y, pos.z - 7);
-        const bulletComp1 = bullet1.getComponent(Bullet);
-        bulletComp1.show(this.bulletSpeed, false, Constant.Direction.LEFT);
-
-        // right
-        const bullet2 = PoolManager.instance().getNode(this.bullet05, this.bulletRoot);
-        // bullet2.setParent(this.bulletRoot);
-        bullet2.setPosition(pos.x + 4, pos.y, pos.z - 7);
-        const bulletComp2 = bullet2.getComponent(Bullet);
-        bulletComp2.show(this.bulletSpeed, false, Constant.Direction.RIGHT);
+        // Lv1: 3-way fan; Lv2: 5-way; Lv3: 7-way.
+        const lanes: Array<[number, number]> = this._weaponLevel >= 3
+            ? [[-12, Constant.Direction.LEFT], [-8, Constant.Direction.LEFT], [-4, Constant.Direction.LEFT], [0, Constant.Direction.MIDDLE], [4, Constant.Direction.RIGHT], [8, Constant.Direction.RIGHT], [12, Constant.Direction.RIGHT]]
+            : this._weaponLevel >= 2
+            ? [[-8, Constant.Direction.LEFT], [-4, Constant.Direction.LEFT], [0, Constant.Direction.MIDDLE], [4, Constant.Direction.RIGHT], [8, Constant.Direction.RIGHT]]
+            : [[-4, Constant.Direction.LEFT], [0, Constant.Direction.MIDDLE], [4, Constant.Direction.RIGHT]];
+        for (const [off, dir] of lanes) {
+            this._spawnPlayerBullet(this.bullet05, off, dir);
+        }
     }
 
     // ---------- enemy bullets ----------
@@ -756,10 +757,21 @@ export class GameManager extends Component {
     }
 
     public changeBulletType(type: number){
-        this._bulletType = type;
+        if (type === this._bulletType) {
+            this._weaponLevel = Math.min(3, this._weaponLevel + 1);
+        } else {
+            this._bulletType = type;
+            this._weaponLevel = 1;
+        }
         const name = type === Constant.BulletPropType.BULLET_H ? '双发'
             : type === Constant.BulletPropType.BULLET_S ? '散射' : '单发';
-        this._showToast('火力提升：' + name + '！');
+        this._showToast('火力提升：' + name + ' Lv.' + this._weaponLevel + '！');
+    }
+
+    /** Back to single-shot Lv.1 (life lost / new run). */
+    private _resetWeapon(){
+        this._bulletType = Constant.BulletPropType.BULLET_M;
+        this._weaponLevel = 1;
     }
 
     public playAudioEffect(name: string){
