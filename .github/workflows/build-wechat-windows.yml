@@ -133,8 +133,8 @@ jobs:
         run: |
           $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
           $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
-          & $exe --project "$ws/airplane" --build "stage=build;configPath=$ws/airplane/build-configs/wechatgame.json;"
-          $creatorStatus = $LASTEXITCODE
+          $proc = Start-Process -FilePath $exe -ArgumentList @('--project', "$ws/airplane", '--build', "stage=build;configPath=$ws/airplane/build-configs/wechatgame.json;") -Wait -NoNewWindow -PassThru
+          $creatorStatus = $proc.ExitCode
           switch ($creatorStatus) {
             36 { Write-Host 'Cocos Creator wechatgame build succeeded (exit 36).' }
             32 { Write-Error 'Cocos Creator rejected the build parameters (exit 32).'; exit 32 }
@@ -171,8 +171,8 @@ jobs:
         run: |
           $exe = Join-Path $env:RUNNER_TEMP 'Cocos\Creator\3.8.8\CocosCreator.exe'
           $ws = $env:GITHUB_WORKSPACE -replace '\\', '/'
-          & $exe --project "$ws/airplane" --build "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=c69a7c48-3e23-42e1-83c4-c82a8d0d98ff;webOrientation=portrait;"
-          $creatorStatus = $LASTEXITCODE
+          $proc = Start-Process -FilePath $exe -ArgumentList @('--project', "$ws/airplane", '--build', "platform=web-mobile;outputName=web-mobile;buildPath=build;startScene=c69a7c48-3e23-42e1-83c4-c82a8d0d98ff;webOrientation=portrait;") -Wait -NoNewWindow -PassThru
+          $creatorStatus = $proc.ExitCode
           switch ($creatorStatus) {
             36 { Write-Host 'Cocos Creator web-mobile build succeeded (exit 36).' }
             32 { Write-Error 'Cocos Creator rejected the build parameters (exit 32).'; exit 32 }
