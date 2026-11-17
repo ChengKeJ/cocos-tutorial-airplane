@@ -384,7 +384,7 @@ export class KartUI extends Component {
         this._zoneLabel = this._makeLabel(hud, 'zoneLabel', 0, 540, 24, GREY, '');
         this._speedLabel = this._makeLabel(hud, 'speedLabel', 280, -520, 36, WHITE, '0 km/h');
         this._itemLabel = this._makeLabel(hud, 'itemLabel', 0, -520, 32, WHITE, '—');
-        this._countdownLabel = this._makeLabel(hud, 'countdownLabel', 0, 150, 120, GOLD, '');
+        this._countdownLabel = this._makeLabel(this._canvas, 'countdownLabel', 0, 150, 120, GOLD, '');
         this._countdownLabel.node.active = false;
         this._toastLabel = this._makeLabel(hud, 'toastLabel', 0, -100, 28, WHITE, '');
         this._toastLabel.node.active = false;
