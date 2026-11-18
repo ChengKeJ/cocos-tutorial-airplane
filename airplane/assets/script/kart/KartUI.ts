@@ -15,6 +15,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find } from 'cc';
 import { KartGame } from './KartGame';
+import { TRACK_DEFS } from './KartTrack';
 import { ITEM_NAMES, KartConstants } from './KartConstants';
 const { ccclass, property } = _decorator;
 
@@ -67,6 +68,8 @@ export class KartUI extends Component {
     // panels
     private _menuPanel: Node = null;
     private _menuBestLabel: Label = null;
+    private _trackBtnLabels: Label[] = [];
+    private _trackDescLabel: Label = null;
     private _resultsPanel: Node = null;
     private _resultsLabel: Label = null;
     private _resultsTitle: Label = null;
@@ -181,15 +184,38 @@ export class KartUI extends Component {
         if (this._menuPanel) { this._menuPanel.active = show; }
         if (show) {
             this.showHud(false);
-            if (this._menuBestLabel && this._game) {
-                const b = this._game.bestTimes();
-                const f = b.fwd > 0 ? fmtTime(b.fwd / 1000) : '——';
-                const r = b.rev > 0 ? fmtTime(b.rev / 1000) : '——';
-                this._menuBestLabel.string = (b.fwd > 0 || b.rev > 0)
-                    ? '正赛最佳 ' + f + ' · 逆向最佳 ' + r
-                    : '暂无成绩，来跑第一圈！';
-            }
+            this._refreshTrackUI();
         }
+    }
+
+    /** Track buttons (✓ on the selected one) + desc + best label. */
+    private _refreshTrackUI(): void {
+        if (!this._game) { return; }
+        const sel = this._game.trackId;
+        for (let i = 0; i < TRACK_DEFS.length && i < this._trackBtnLabels.length; i++) {
+            const d = TRACK_DEFS[i];
+            this._trackBtnLabels[i].string = (d.id === sel ? '✓ ' : '') + d.name;
+        }
+        if (this._trackDescLabel) {
+            let def = TRACK_DEFS[0];
+            for (const d of TRACK_DEFS) { if (d.id === sel) { def = d; } }
+            const len = this._game.track ? Math.round(this._game.track.length) : 0;
+            this._trackDescLabel.string = def.desc + (len > 0 ? ' · ' + len + 'm' : '');
+        }
+        if (this._menuBestLabel) {
+            const b = this._game.bestTimes();
+            const f = b.fwd > 0 ? fmtTime(b.fwd / 1000) : '——';
+            const r = b.rev > 0 ? fmtTime(b.rev / 1000) : '——';
+            this._menuBestLabel.string = (b.fwd > 0 || b.rev > 0)
+                ? '正赛最佳 ' + f + ' · 逆向最佳 ' + r
+                : '暂无成绩，来跑第一圈！';
+        }
+    }
+
+    private _selectTrack(id: string): void {
+        if (!this._game) { return; }
+        this._game.selectTrack(id);
+        this._refreshTrackUI();
     }
 
     public showHud(show: boolean) {
@@ -506,18 +532,32 @@ export class KartUI extends Component {
         menu.setPosition(0, 0, 0);
         this._menuPanel = menu;
         menu.active = false;
-        this._makeLabel(menu, 'title', 0, 300, 56, GOLD, '飞车狂飙');
-        this._makeLabel(menu, 'subtitle', 0, 220, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
-        this._menuBestLabel = this._makeLabel(menu, 'best', 0, 130, 28, GOLD, '');
+        this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
+        this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
+        // track select: two circuits, each playable fwd + reverse.
+        // Icons are decorative; the ✓ prefix marks the selected one.
+        const trackIcons = ['🌊', '🌵'];
+        for (let i = 0; i < TRACK_DEFS.length; i++) {
+            const d = TRACK_DEFS[i];
+            const icon = i < trackIcons.length ? trackIcons[i] : '';
+            const x = i === 0 ? -125 : 125;
+            const btn = this._makeButton(menu, 'trackBtn' + d.id, x, 150, 230, 90,
+                icon + ' ' + d.name, 30, new Color(40, 90, 60, 255),
+                () => { this._selectTrack(d.id); });
+            const lab = btn.getChildByName('label');
+            if (lab) { this._trackBtnLabels.push(lab.getComponent(Label)); }
+        }
+        this._trackDescLabel = this._makeLabel(menu, 'trackDesc', 0, 85, 24, GREY, '');
+        this._menuBestLabel = this._makeLabel(menu, 'best', 0, 30, 28, GOLD, '');
         // mode select: 正赛 drives the circuit forward, 逆向 drives the
-        // same 1606 m the other way (reversed checkpoints / racing line).
-        this._makeButton(menu, 'startFwdBtn', 0, 0, 480, 100, '🏁 正赛开始', 42,
+        // same centreline the other way (reversed checkpoints / racing line).
+        this._makeButton(menu, 'startFwdBtn', 0, -60, 480, 100, '🏁 正赛开始', 42,
             new Color(30, 120, 220, 255), () => { if (this._game) { this._game.startRaceInMode(false); } });
-        this._makeButton(menu, 'startRevBtn', 0, -120, 480, 100, '🔄 逆向开始', 42,
+        this._makeButton(menu, 'startRevBtn', 0, -170, 480, 100, '🔄 逆向开始', 42,
             new Color(150, 80, 200, 255), () => { if (this._game) { this._game.startRaceInMode(true); } });
-        this._makeButton(menu, 'hallBtn', 0, -240, 480, 100, '回大厅', 40,
+        this._makeButton(menu, 'hallBtn', 0, -280, 480, 100, '回大厅', 40,
             new Color(90, 100, 120, 255), () => { if (this._game) { this._game.quitToHall(); } });
-        this._makeLabel(menu, 'hint', 0, -340, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
+        this._makeLabel(menu, 'hint', 0, -370, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
 
         // --- results ---
         const res = new Node('kartResults');
