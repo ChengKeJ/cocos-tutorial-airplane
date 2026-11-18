@@ -659,36 +659,91 @@ export class KartTrack {
         const f = this._frame;
         const pos = new Vec3();
 
-        // trees: every ~15 m, both sides, skipping tunnel + bridge
-        for (let s = 8; s < this.length; s += 15) {
+        // trees: every ~10 m, both sides, skipping tunnel + bridge.
+        // Pass B: bigger + closer + denser — the old trees (scale 0.8-1.5,
+        // 7-25 m off the road) never read in screenshots.
+        for (let s = 8; s < this.length; s += 10) {
             const t = s / this.length;
             let zi = ZONES.length - 1;
             for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
             if (zi === 4 || zi === 8) { continue; } // tunnel, bridge
             this.sampleAt(s, f);
             const side = rnd() < 0.5 ? -1 : 1;
-            const lat = side * (f.half + 7 + rnd() * 18);
+            const lat = side * (f.half + 4 + rnd() * 10);
             this.posAt(s, lat, pos);
             const y = pos.y - 0.25;
-            const sc = 0.8 + rnd() * 0.7;
+            const sc = 1.3 + rnd() * 0.9;
             const trunkH = 2.4 * sc;
             b.addCylinder(0x6e5234, new Vec3(pos.x, y + trunkH / 2, pos.z), 0, 0.3 * sc, 0.42 * sc, trunkH);
             const fol = rnd() < 0.5 ? 0x34823e : 0x3f9a4a;
             b.addCone(fol, new Vec3(pos.x, y + trunkH + 2.4 * sc, pos.z), 0, 2.3 * sc, 5.2 * sc, 10);
         }
 
-        // houses in the village (t 0.22-0.38), both sides every ~26 m
-        for (let s = 0.225 * this.length; s < 0.375 * this.length; s += 26) {
+        // houses in the village (t 0.22-0.38), both sides every ~22 m
+        for (let s = 0.225 * this.length; s < 0.375 * this.length; s += 22) {
             this.sampleAt(s, f);
             for (const side of [-1, 1]) {
                 if (rnd() < 0.25) { continue; }
-                const lat = side * (f.half + 10 + rnd() * 5);
+                const lat = side * (f.half + 7 + rnd() * 4);
                 this.posAt(s, lat, pos);
                 const y = pos.y - 0.25;
                 const yaw = Math.atan2(f.tangent.x, f.tangent.z) + (rnd() - 0.5) * 0.3;
-                b.addBox(0xe8d6b4, new Vec3(pos.x, y + 1.8, pos.z), yaw, 6, 3.6, 5);
-                b.addCone(0xac543e, new Vec3(pos.x, y + 3.6 + 1.2, pos.z), yaw + Math.PI / 4, 4.4, 2.4, 4);
+                b.addBox(0xe8d6b4, new Vec3(pos.x, y + 2.2, pos.z), yaw, 7.5, 4.4, 6.5);
+                b.addCone(0xac543e, new Vec3(pos.x, y + 4.4 + 1.4, pos.z), yaw + Math.PI / 4, 5.2, 2.8, 4);
             }
+        }
+
+        // trackside boards: every ~60 m, alternating sides, face the road.
+        // Skipping tunnel + bridge (no room there). Bright colours so they
+        // read at speed — they are the cheapest "big race" signal.
+        const BOARD_COLS = [0xe63946, 0x2a9d8f, 0xf4a261, 0x4361ee, 0x9b5de5, 0xf15bb5];
+        let bi = 0;
+        for (let s = 30; s < this.length; s += 60) {
+            const t = s / this.length;
+            let zi = ZONES.length - 1;
+            for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
+            if (zi === 4 || zi === 8) { continue; }
+            this.sampleAt(s, f);
+            const side = (bi % 2 === 0) ? -1 : 1;
+            const lat = side * (f.half + 4.5);
+            this.posAt(s, lat, pos);
+            const y = pos.y - 0.25;
+            const yaw = Math.atan2(f.tangent.x, f.tangent.z) + Math.PI / 2;
+            b.addBox(0x2b2b30, new Vec3(pos.x, y + 1.2, pos.z), yaw, 0.35, 2.4, 0.35);
+            b.addBox(BOARD_COLS[bi % BOARD_COLS.length], new Vec3(pos.x, y + 3.4, pos.z), yaw, 4.6, 1.9, 0.25);
+            bi++;
+        }
+
+        // distant mountains: a ring of big low-poly cones around the
+        // circuit so the horizon is never flat blue.
+        const cc = this.centroid(new Vec3());
+        for (let i = 0; i < 10; i++) {
+            const ang = (i / 10) * Math.PI * 2 + rnd() * 0.3;
+            const r = 380 + rnd() * 140;
+            const h = 70 + rnd() * 80;
+            const base = 90 + rnd() * 70;
+            const col = i % 2 === 0 ? 0x5a6a7a : 0x4a6a52;
+            b.addCone(col, new Vec3(cc.x + Math.cos(ang) * r, h / 2 - 0.5, cc.z + Math.sin(ang) * r), 0, base, h, 6);
+        }
+
+        // clouds: flattened white spheres high up, scattered over the map
+        for (let i = 0; i < 12; i++) {
+            const ang = rnd() * Math.PI * 2;
+            const r = 120 + rnd() * 260;
+            b.addSphere(0xffffff,
+                new Vec3(cc.x + Math.cos(ang) * r, 65 + rnd() * 30, cc.z + Math.sin(ang) * r),
+                0, 18 + rnd() * 14, 4 + rnd() * 3, 12 + rnd() * 8);
+        }
+
+        // dashed centre line: yellow dashes every 6 m so speed reads on
+        // the road itself (the old road was bare asphalt + edge lines).
+        for (let s = 0; s < this.length; s += 6) {
+            this.sampleAt(s, f);
+            const yaw = Math.atan2(f.tangent.x, f.tangent.z);
+            const px = f.pos.x + f.up.x * 0.12;
+            const py = f.pos.y + f.up.y * 0.12;
+            const pz = f.pos.z + f.up.z * 0.12;
+            b.addBox(0xf5d020, new Vec3(px, py, pz), yaw, 0.3, 0.06, 2.5);
         }
 
         // rocks on the cliff left side (t 0.38-0.52)
@@ -735,7 +790,15 @@ export class KartTrack {
         }
         this.posAt(0, 0, pos);
         b.addBox(0x182650, new Vec3(pos.x, pos.y + 6.5, pos.z), gyaw, f.half * 2 + 2.2, 1.4, 0.5);
-        b.addBox(0xffc400, new Vec3(pos.x, pos.y + 5.9, pos.z), gyaw, f.half * 2 + 2.2, 0.35, 0.55);
+        // checkered start strip under the beam (replaces the old yellow bar)
+        const stripW = f.half * 2 + 2.2;
+        const segW = stripW / 8;
+        for (let i = 0; i < 8; i++) {
+            const lat = -stripW / 2 + segW * (i + 0.5);
+            this.posAt(0, lat, pos);
+            b.addBox(i % 2 === 0 ? 0x111111 : 0xffffff,
+                new Vec3(pos.x, pos.y + 5.85, pos.z), gyaw, segW, 0.5, 0.6);
+        }
 
         // boost pads (cyan strips on the road)
         for (const pad of BOOST_PADS) {
