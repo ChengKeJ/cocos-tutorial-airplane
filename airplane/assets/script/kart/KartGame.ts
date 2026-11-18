@@ -329,6 +329,16 @@ export class KartGame extends Component {
             this._updateVisuals(dt);
             this._updateCamera(dt, false);
             if (this.ui) { this.ui.tickHud(); }
+            // position-change toasts (skip the opening scramble; player still racing)
+            if (!this._player.finished) {
+                const pos = this.playerPosition;
+                if (this._lastPos > 0 && pos !== this._lastPos && this._raceTime > 3) {
+                    if (this.ui) {
+                        this.ui.showToast(pos < this._lastPos ? '⬆ 超到第 ' + pos + ' 名！' : '⬇ 掉到第 ' + pos + ' 名');
+                    }
+                }
+                this._lastPos = pos;
+            }
             if (this._player.finished && !this._resultsShown) {
                 this._resultsT += dt;
                 const allDone = this._karts.every((k) => k.finished);
@@ -349,14 +359,6 @@ export class KartGame extends Component {
             this._collideKarts();
             this._updateVisuals(dt);
             this._updateCamera(dt, false);
-            // position-change toasts (skip the opening scramble)
-            const pos = this.playerPosition;
-            if (this._lastPos > 0 && pos !== this._lastPos && this._raceTime > 3) {
-                if (this.ui) {
-                    this.ui.showToast(pos < this._lastPos ? '⬆ 超到第 ' + pos + ' 名！' : '⬇ 掉到第 ' + pos + ' 名');
-                }
-            }
-            this._lastPos = pos;
             return;
         }
         if (this.state === 'menu') {
