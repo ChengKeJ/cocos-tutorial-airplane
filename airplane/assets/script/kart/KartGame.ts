@@ -14,10 +14,11 @@
  * KartUI (on the Canvas) drives input + HUD and sets game.ui = itself.
  */
 
-import { _decorator, AudioClip, AudioSource, Camera, Color, Component, DirectionalLight, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
+import { _decorator, AudioClip, AudioSource, Camera, Color, Component, DirectionalLight, isValid, Layers, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
 import { ItemKind, KartConstants, PAINTS, PaintScheme, ROSTER, paintTapResult, parseOwnedPaints, parseSelectedPaints, rewardForFinish, rosterOrder } from './KartConstants';
 import { KartTrack, MeshBuilder, TrackFrame, trackDefById } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
+import { ensureStdEffect } from './KartMaterials';
 import { KartItems } from './KartItems';
 import { aiSkillOf, computeRubberBand, hash01 } from './KartItemsLogic';
 const { ccclass, property } = _decorator;
@@ -138,6 +139,8 @@ export class KartGame extends Component {
     public get reverseMode(): boolean { return this._reverse; }
 
     private _track: KartTrack = null;
+    /** True once _buildWorld() has run (start() is async — see below). */
+    private _worldBuilt = false;
     private _trackId = 'sunset';
     private _trackRoot: Node = null;
     private _karts: KartState[] = [];
@@ -429,6 +432,23 @@ export class KartGame extends Component {
         this._ownedPaints = parseOwnedPaints(sys.localStorage.getItem(PAINTS_KEY));
         this._selectedPaints = parseSelectedPaints(sys.localStorage.getItem(SELECTED_PAINTS_KEY));
 
+        // fix130 re-run 2: the world (track + karts) is built ONLY after
+        // the PBR anchor effect has loaded (or failed — unlit fallback).
+        // Building with an unresolved effect half-initialises SubModels
+        // and bricks scene teardown (drive130d/f) — see KartMaterials.ts.
+        // The menu (KartUI) shows meanwhile from its own start(), and
+        // update() is null-safe until the world exists.
+        ensureStdEffect().then(() => {
+            if (this._worldBuilt) { return; }
+            if (!isValid(this) || !this.node || !isValid(this.node)) { return; }
+            this._buildWorld();
+        });
+    }
+
+    /** Build the track world, sun, karts, pools, items and audio — only
+     * after the material path is settled (see start()). */
+    private _buildWorld(): void {
+        this._worldBuilt = true;
         // selected track world (karts / items are created after this)
         this._rebuildTrack();
 
