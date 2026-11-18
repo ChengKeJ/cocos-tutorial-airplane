@@ -477,15 +477,31 @@ export class KartGame extends Component {
         // fix133: the fill MUST be warm white, not cool blue — the old
         // cool fill (215,228,255) tinted yellow paint green, so kart 2
         // 闪电's rear rendered olive-green even though the material was
-        // bright yellow [255,210,63] (probe-proven). Warm fill 2.0 +
+        // bright yellow [255,210,63] (probe-proven). Warm fill +
         // the paint emissive floor (KartModel.ts) keep the rear its own
         // hue. Sun 2.4 -> 2.6 for the lighter road (item 5).
+        // fix134: the illuminances were ~40,000x too dim — Cocos
+        // Creator 3.8 treats DirectionalLight.illuminance as LUX, and
+        // 2.6/2.0 lux contributes ~nothing (probe-proven: sun=20/fill=10
+        // changed nothing, sun=100000/fill=50000 brightened the road
+        // from (24,53,89) to (83,103,130)). The scene was lit only by
+        // the dim blue ambient + the 15% paint emissive floor — that is
+        // why there was NO gloss anywhere, why orange read brown and
+        // yellow read olive, and why the road read dark navy. The FILL
+        // is the main light (renderScene._mainLight is the fill, not
+        // the sun — the sun does not light the road or the kart rear in
+        // this build, probe-proven), so fill 2.0 -> 80000 at elevation
+        // 50° (road reads light grey-blue (109,124,148), paint vivid,
+        // helmet shows a clear specular highlight). Sun 2.6 -> 40000:
+        // dead in the web build, harmless there, may help other
+        // pipelines. Rotations unchanged. Paint roughness 0.12 -> 0.08
+        // (KartModel.ts) tightens the highlight further.
         const sun = new Node('sun');
         sun.layer = Layers.Enum.DEFAULT;
         sun.setParent(this.node);
         sun.setRotationFromEuler(-55, 180, 0);
         const sunLight = sun.addComponent(DirectionalLight);
-        sunLight.illuminance = 2.6;
+        sunLight.illuminance = 40000;
         sunLight.color = new Color(255, 244, 214, 255);
 
         const fill = new Node('fill');
@@ -493,7 +509,7 @@ export class KartGame extends Component {
         fill.setParent(this.node);
         fill.setRotationFromEuler(-50, 0, 0);
         const fillLight = fill.addComponent(DirectionalLight);
-        fillLight.illuminance = 2.0;
+        fillLight.illuminance = 80000;
         fillLight.color = new Color(255, 238, 220, 255);
 
         const kartsRoot = new Node('karts');
