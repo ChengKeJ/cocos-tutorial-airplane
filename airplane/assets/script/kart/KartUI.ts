@@ -124,12 +124,6 @@ export class KartUI extends Component {
         this._buildHud();
         this._buildPanels();
         this._buildStick();
-        // toast must render above the menu/results/pause panels: it is
-        // built in _buildHud() before the panels exist, so reparent it
-        // to the end of the Canvas children here (last child = drawn on
-        // top). Otherwise the menu panel covers it — that is why "金币
-        // 不够" / "已解锁新涂装！" fired but was invisible (drive124).
-        if (this._toastLabel) { this._toastLabel.node.setParent(this._canvas); }
         if (this._game && this._game.state === 'menu') { this.showMenu(); }
     }
 
@@ -394,6 +388,14 @@ export class KartUI extends Component {
         this._toastLabel.string = text;
         this._toastLabel.node.active = true;
         this._toastTime = seconds;
+        // Render above everything (menu scrim, results, pause panels):
+        // re-assert last-sibling order on every show. A start()-time
+        // setParent() to the same parent is a no-op in Creator 3.8, so
+        // the drive124 fix left the toast dimmed under the scrim
+        // (drive125) — only setSiblingIndex() actually reorders it.
+        if (this._canvas) {
+            this._toastLabel.node.setSiblingIndex(this._canvas.children.length - 1);
+        }
     }
 
     public showPause(show: boolean) {
