@@ -944,6 +944,20 @@ export class GameManager extends Component {
     public createEnemyEffect(pos: Vec3){
         const effect = PoolManager.instance().getNode(this.enemyExplode, this.node);
         effect.setPosition(pos);
+        // pooled nodes keep their last scale — a hit burst must never
+        // shrink a later death explosion, so reset it on every use
+        effect.setScale(1, 1, 1);
+    }
+
+    /** Small impact burst for a non-lethal hit: the same pooled
+     * explosion prefab as the death effect, at reduced scale, so it
+     * reads as a spark instead of a death. The scale is set on every
+     * use (see createEnemyEffect) and the Explode component returns
+     * the node to the pool after 1 s, so bursts stay cheap. */
+    public createHitEffect(pos: Vec3, scale: number){
+        const effect = PoolManager.instance().getNode(this.enemyExplode, this.node);
+        effect.setPosition(pos);
+        effect.setScale(scale, scale, scale);
     }
 
     public createBulletProp(kind: number = Constant.PropKind.BULLET, x: number = 15, z: number = -50){
