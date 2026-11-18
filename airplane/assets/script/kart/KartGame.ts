@@ -47,6 +47,7 @@ const CAM_LOOK_Y = 0.9;
 const FOV_BASE = 62; // was 60
 const FOV_KICK = 14; // + at top speed (was 8)
 const SMOKE_POOL = 40;
+const SPARK_POOL = 24; // drift-spark pool (step 4): small bright orange nodes
 
 interface KartState {
     model: KartModel;
@@ -90,6 +91,7 @@ interface KartState {
     wheelSpin: number;
     flame: Node; // boost flame cone (child of the kart root, on while boosting)
     smokeAcc: number; // drift-smoke spawn accumulator (seconds)
+    wallHit: boolean; // set by _moveKart on a wall clamp, consumed by _afterMove (step 4 thud)
 }
 
 @ccclass('KartGame')
@@ -102,8 +104,10 @@ export class KartGame extends Component {
     public brakeHeld = false;
 
     // ---- Pass D: audio clips, wired in kart.scene (uuids in res/audio) ----
-    // bgm/use/spin reuse the plane's tutorial clips; engine/beep/go/pickup/
-    // screech are kart-*.wav synthesised for this game (see res/audio/sound).
+    // bgm is kart-bgm.wav (step 4: own 120 BPM chiptune loop, replaces the
+    // plane's tutorial bgm); use/spin still reuse the plane's clips;
+    // engine/beep/go/pickup/screech/lap/finish/thud are kart-*.wav
+    // synthesised for this game (see res/audio/sound).
     @property({ type: AudioClip })
     public bgmClip: AudioClip = null;
     @property({ type: AudioClip })
@@ -120,6 +124,12 @@ export class KartGame extends Component {
     public spinClip: AudioClip = null;
     @property({ type: AudioClip })
     public screechClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public lapClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public finishClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public thudClip: AudioClip = null;
 
     public state = 'menu'; // menu | countdown | racing | paused | finished
 
@@ -170,6 +180,10 @@ export class KartGame extends Component {
     private _smokePos = new Vec3();
     private _shakeAmp = 0;
     private _lastCollideShake = -10;
+    // ---- Step 4 feel FX ----
+    private _sparks: Array<{ node: Node; life: number; maxLife: number }> = [];
+    private _fovKick = 0; // extra FOV on boost, decays in _updateCamera
+    private _lastWallThud = -10; // raceTime of the last wall-thud (throttled)
     // ---- Pass E presentation ----
     private _lastPos = 0;
     // ---- Pass D audio ----
@@ -348,7 +362,7 @@ export class KartGame extends Component {
             aiSkill: skill, aiAggression: 0.5 + skill * 0.5,
             aiItemDelay: 0, aiHoldT: 0, aiBand: 1, aiAssist: 0,
             wheelSpin: 0,
-            flame, smokeAcc: 0,
+            flame, smokeAcc: 0, wallHit: false,
         };
         return ks;
     }
@@ -436,6 +450,26 @@ export class KartGame extends Component {
 
         this._items = new KartItems(this._track, this.node);
         this._items.buildBoxes();
+
+        // Step 4: drift-spark pool — same pattern as the smoke pool, but
+        // small bright orange nodes that live fast and die fast.
+        const sparkPrim = primitives.sphere(0.5, { segments: 6 });
+        const sparkMesh = utils.MeshUtils.createMesh({
+            positions: sparkPrim.positions, normals: sparkPrim.normals,
+            uvs: sparkPrim.uvs, indices: sparkPrim.indices,
+            minPos: new Vec3(-0.5, -0.5, -0.5), maxPos: new Vec3(0.5, 0.5, 0.5),
+        });
+        const sparkMat = MeshBuilder.unlitMaterial(0xffa31a);
+        for (let i = 0; i < SPARK_POOL; i++) {
+            const node = new Node('spark');
+            node.layer = Layers.Enum.DEFAULT;
+            node.setParent(this.node);
+            const r = node.addComponent(ModelComponent);
+            r.mesh = sparkMesh;
+            r.setMaterial(sparkMat, 0);
+            node.active = false;
+            this._sparks.push({ node, life: 0, maxLife: 0.35 });
+        }
 
         // Pass D: audio — three runtime sources (BGM loop, engine loop,
         // one-shots). Clips come from the @property fields wired in the scene.
@@ -640,7 +674,7 @@ export class KartGame extends Component {
             k.maxSTotal = -back; k.wrongWayT = 0;
             k.aiDrift = 0; k.aiDriftDir = 0;
             k.itemKind = ItemKind.NONE; k.itemCount = 0; k.itemArm = 0;
-            k.starTime = 0; k.starHitT = 0;
+            k.starTime = 0; k.starHitT = 0; k.wallHit = false;
             k.aiItemDelay = 0; k.aiHoldT = 0; k.aiBand = 1; k.aiAssist = 0;
         }
         if (this._items) { this._items.reset(); }
@@ -753,11 +787,11 @@ export class KartGame extends Component {
             k.driftTime += dt * stats.driftMul;
             if (k.driftTime > KartConstants.DRIFT_MAX_HOLD) {
                 const tier = this._releaseDrift(k);
-                if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); this._playSfx(this.screechClip); }
+                if (isPlayer && tier >= 1) { this._boostKick(3 + tier * 1.5, 0.06 + tier * 0.02); if (tier >= 2) { this._playSfx(this.screechClip); } }
             }
         } else if (k.driftTime > 0) {
             const tier = this._releaseDrift(k);
-            if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); this._playSfx(this.screechClip); }
+            if (isPlayer && tier >= 1) { this._boostKick(3 + tier * 1.5, 0.06 + tier * 0.02); if (tier >= 2) { this._playSfx(this.screechClip); } }
         }
 
         // speed
@@ -837,6 +871,7 @@ export class KartGame extends Component {
             k.d = k.d > 0 ? lim : -lim;
             k.heading *= 0.6;
             if (k.speed > 0) { k.speed *= 0.995; }
+            k.wallHit = true; // step 4: _afterMove turns this into a thud (throttled)
         }
     }
 
@@ -853,6 +888,7 @@ export class KartGame extends Component {
             k.lapStartT = this._raceTime;
             if (isPlayer) {
                 if (lap <= KartConstants.LAP_COUNT) {
+                    this._playSfx(this.lapClip); // step 4: lap fanfare
                     if (this.ui) {
                         if (lap === KartConstants.LAP_COUNT) { this.ui.showBanner('🏁 最后一圈！', 2); }
                         else { this.ui.showToast('第 ' + lap + ' 圈！'); }
@@ -881,8 +917,19 @@ export class KartGame extends Component {
                     sys.localStorage.setItem(COINS_KEY, String(this._coins));
                     sys.localStorage.setItem(RACES_KEY, String(this._races));
                     sys.localStorage.setItem(WINS_KEY, String(this._wins));
+                    this._playSfx(this.finishClip); // step 4: finish jingle
                     if (this.ui) { this.ui.showToast('🏁 完赛！'); }
                 }
+            }
+        }
+        // wall thud (step 4): the clamp flag rides the wall for many
+        // frames, so the sound + shake are throttled to once per 0.4 s.
+        if (k.wallHit) {
+            k.wallHit = false;
+            if (isPlayer && this._raceTime - this._lastWallThud > 0.4) {
+                this._lastWallThud = this._raceTime;
+                this._playSfx(this.thudClip);
+                this.addShake(0.06);
             }
         }
         // wrong-way
@@ -912,7 +959,7 @@ export class KartGame extends Component {
             k.boostTime = KartConstants.PAD_BOOST_TIME;
             k.boostMul = KartConstants.PAD_BOOST_MUL;
             k.padCooldown = 2;
-            if (isPlayer) { this.addShake(0.06); }
+            if (isPlayer) { this._boostKick(7, 0.10); } // step 4: FOV kick + shake
         }
     }
 
@@ -930,10 +977,11 @@ export class KartGame extends Component {
                     const avg = (a.speed + b.speed) / 2;
                     a.speed = avg * 0.98;
                     b.speed = avg * 0.98;
-                    // bump shake (player only, at most once per 0.5 s)
+                    // bump shake + thud (player only, at most once per 0.5 s)
                     if ((a.isPlayer || b.isPlayer) && this._raceTime - this._lastCollideShake > 0.5) {
                         this._lastCollideShake = this._raceTime;
                         this.addShake(0.12);
+                        this._playSfx(this.thudClip); // step 4: collision thud
                     }
                 }
             }
@@ -982,15 +1030,27 @@ export class KartGame extends Component {
                     const side = Math.random() < 0.5 ? -0.85 : 0.85;
                     this._track.posAt(k.sTotal - 1.1, k.d + side, this._smokePos);
                     this._spawnSmoke(this._smokePos.x, this._smokePos.y + 0.25, this._smokePos.z);
+                    // step 4: drift sparks — bright orange flecks at the
+                    // same rear wheels, fewer and faster than the smoke
+                    if (Math.random() < 0.6) {
+                        this._spawnSpark(this._smokePos.x, this._smokePos.y + 0.15, this._smokePos.z);
+                    }
                 }
             }
         }
         this._updateSmoke(dt);
+        this._updateSparks(dt);
     }
 
     /** Camera shake: amp in metres, decays in _updateCamera. */
     public addShake(amp: number): void {
         if (amp > this._shakeAmp) { this._shakeAmp = amp; }
+    }
+
+    /** Step 4: boost feel — FOV kick (decays in _updateCamera) + shake. */
+    private _boostKick(fovAmp: number, shakeAmp: number): void {
+        if (fovAmp > this._fovKick) { this._fovKick = fovAmp; }
+        this.addShake(shakeAmp);
     }
 
     // ---- Pass D audio ----
@@ -1043,6 +1103,32 @@ export class KartGame extends Component {
             s.node.setScale(grow * end, grow * end, grow * end);
             const p = s.node.position;
             s.node.setPosition(p.x, p.y + dt * 0.9, p.z);
+        }
+    }
+
+    /** Step 4: grab a free spark node, light it at the rear wheel. */
+    private _spawnSpark(x: number, y: number, z: number): void {
+        for (const s of this._sparks) {
+            if (s.node.active) { continue; }
+            s.node.active = true;
+            s.node.setPosition(x, y, z);
+            s.life = s.maxLife = 0.25 + Math.random() * 0.15;
+            s.node.setScale(0.22, 0.22, 0.22);
+            return;
+        }
+    }
+
+    /** Step 4: sparks shrink fast and flicker out (no lingering glow). */
+    private _updateSparks(dt: number): void {
+        for (const s of this._sparks) {
+            if (!s.node.active) { continue; }
+            s.life -= dt;
+            if (s.life <= 0) { s.node.active = false; continue; }
+            const t = s.life / s.maxLife; // 1..0 shrinking
+            const sc = 0.22 * t;
+            s.node.setScale(sc, sc, sc);
+            const p = s.node.position;
+            s.node.setPosition(p.x, p.y + dt * 1.4, p.z);
         }
     }
 
@@ -1099,7 +1185,9 @@ export class KartGame extends Component {
         this._camera.lookAt(this._camLook, new Vec3(0, 1, 0));
         if (this._cameraComp) {
             const spdRatio = Math.min(1, Math.max(0, this._player.speed / KartConstants.BASE_TOP_SPEED));
-            (this._cameraComp as any).fov = FOV_BASE + spdRatio * FOV_KICK;
+            // step 4: boost FOV kick rides on top of the speed FOV and decays
+            if (this._fovKick > 0) { this._fovKick = Math.max(0, this._fovKick - dt * 14); }
+            (this._cameraComp as any).fov = FOV_BASE + spdRatio * FOV_KICK + this._fovKick;
         }
     }
 }
