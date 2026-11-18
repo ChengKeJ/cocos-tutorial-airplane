@@ -80,8 +80,17 @@ function b64ToBytes(s: string): Uint8Array {
 // builtin-unlit fallback — never a null-effect material (see
 // KartMaterials.ts for why the old initialize({ effectName:
 // 'builtin-standard' }) path bricked the game in drive130).
-function standardMaterial(hex: number, metallic: number, roughness: number): Material {
-    return stdMaterial(hex, metallic, roughness, 0);
+function standardMaterial(hex: number, metallic: number, roughness: number, emissiveHex: number = 0): Material {
+    return stdMaterial(hex, metallic, roughness, emissiveHex);
+}
+
+/** Scale a hex colour's channels by f (clamped) — used for the paint
+ * emissive below. Exported for the node tests. */
+export function dimHex(hex: number, f: number): number {
+    const r = Math.min(255, Math.max(0, Math.round(((hex >> 16) & 0xff) * f)));
+    const g = Math.min(255, Math.max(0, Math.round(((hex >> 8) & 0xff) * f)));
+    const b = Math.min(255, Math.max(0, Math.round((hex & 0xff) * f)));
+    return (r << 16) | (g << 8) | b;
 }
 
 /** Finish per bucket role. fix132: the old paint finish (metallic 0.55 /
@@ -92,7 +101,15 @@ function standardMaterial(hex: number, metallic: number, roughness: number): Mat
  * diffuse) + LOW roughness (tight sun highlight): paint 0.15 / 0.12.
  * Same for helmet / driver / rims / detail; tires stay matte rubber. */
 function materialForRole(role: string, hex: number): Material {
-    if (role === 'paint') { return standardMaterial(hex, 0.15, 0.12); }
+    // fix133: paint gets a small emissive (15% of its own colour) so a
+    // rear face lit only by the fill can never go dark-olive — the
+    // rendered rear of kart 2 闪电 read olive-green even though the
+    // material was bright yellow [255,210,63], because the rear faces
+    // away from the sun and the cool fill tints yellow green. The
+    // emissive is a floor under the paint colour, not a glow: it lifts
+    // shadowed paint to its own hue while the sunlit side (2.6) still
+    // dominates. Same finish for the procedural paint bodywork below.
+    if (role === 'paint') { return standardMaterial(hex, 0.15, 0.12, dimHex(hex, 0.15)); }
     if (role === 'driver') { return standardMaterial(hex, 0.15, 0.30); }
     if (role === 'tire') { return standardMaterial(hex, 0.0, 0.95); }
     if (role === 'rim') { return standardMaterial(hex, 0.45, 0.18); }
@@ -158,8 +175,11 @@ export function kart2WingTri(cz: number): boolean {
     return cz < -0.6;
 }
 
-/** One decoded triangle of a bucket: centroid + max vertex height. */
-interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; }
+/** One decoded triangle of a bucket: centroid + max vertex height +
+ * max radial distance from the axle (sqrt(y^2+z^2) — the wheel axle
+ * is the local X axis) + longest edge. maxR/maxEdge drive the kart 7
+ * wheel-fin filter (fix133); the body filters only use cz/maxVy. */
+interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; maxR: number; maxEdge: number; }
 
 /** fix132 kart 7 绯焰: drop the spiky rear (245 of 1242 body tris,
  * verified against the baked data):
@@ -168,12 +188,32 @@ interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; }
  *  R2 — the black nose-fin blade (the #101010 bucket's only geometry
  *  above y 0.55, at z 0.18..0.26);
  *  R3 — the front-corner spikes (past z 0.98, |x| > 0.30).
- * Exported for the node tests. */
+ * fix133: the shipped call site passed this to filterBucketTriangles
+ * WITHOUT the negation, so the game kept ONLY these 245 spike tris
+ * and dropped the other 997 body triangles — from the side/front the
+ * kart was a skeleton (drive130 fourth re-run 49y-kart7-side/front.png)
+ * and the "spikes" in the rear view WERE the kept body. The node test
+ * always used the negated predicate, so the inversion was never caught.
+ * The call site below now negates it. Exported for the node tests. */
 export function kart7DropTri(hex: string, g: TriGeom): boolean {
     if (g.cz < -0.40 && g.maxVy > 0.32) { return true; }
     if (hex.toLowerCase() === '#101010' && g.maxVy > 0.55) { return true; }
     if (g.cz > 0.98 && Math.abs(g.cx) > 0.30) { return true; }
     return false;
+}
+
+/** fix133 kart 7 绯焰: the wheel buckets also carry long fins — the
+ * Ben Harrison dragster's wheel fairings are baked into the tyre
+ * buckets as long thin triangles sticking out past the tyre (up to
+ * 1 m in z, tall black sails above the rear tyres). A fin triangle
+ * is one whose verts leave the tyre envelope: radial distance from
+ * the axle (sqrt(y^2+z^2), axle = local X) past the tyre radius
+ * (~0.29 rear / 0.24 front), or a longest edge >= 0.45 m (a tyre
+ * triangle's longest edge is < 0.4). Drops 23 of 361 wheel tris,
+ * verified in Python renders before coding. Exported for the node
+ * tests. */
+export function kart7WheelFinTri(g: TriGeom): boolean {
+    return g.maxR > 0.36 || g.maxEdge >= 0.45;
 }
 
 /** bytes -> base64 (inverse of b64ToBytes, same alphabet; used when a
@@ -210,9 +250,15 @@ function forEachTri(b: KartModelBucket, fn: (g: TriGeom, a: number, c: number, d
         const x0 = comp(a, 0), y0 = comp(a, 2), z0 = comp(a, 4);
         const x1 = comp(c, 0), y1 = comp(c, 2), z1 = comp(c, 4);
         const x2 = comp(d, 0), y2 = comp(d, 2), z2 = comp(d, 4);
+        const edge = (ax: number, ay: number, az: number, bx: number, by: number, bz: number): number => {
+            const dx = ax - bx, dy = ay - by, dz = az - bz;
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        };
         fn({
             cx: (x0 + x1 + x2) / 3, cy: (y0 + y1 + y2) / 3, cz: (z0 + z1 + z2) / 3,
             maxVy: Math.max(y0, y1, y2),
+            maxR: Math.max(Math.sqrt(y0 * y0 + z0 * z0), Math.sqrt(y1 * y1 + z1 * z1), Math.sqrt(y2 * y2 + z2 * z2)),
+            maxEdge: Math.max(edge(x0, y0, z0, x1, y1, z1), edge(x1, y1, z1, x2, y2, z2), edge(x2, y2, z2, x0, y0, z0)),
         }, a, c, d);
     }
 }
@@ -458,7 +504,7 @@ function primNode(parent: Node, name: string, prim: any, mat: Material, x: numbe
  * on an extended rear deck (its baked wing was filtered out). */
 function buildBodywork(body: Node, ki: number, colour: number): void {
     if (ki !== 3 && ki !== 7) { return; }
-    const paint = standardMaterial(colour, 0.15, 0.12);
+    const paint = standardMaterial(colour, 0.15, 0.12, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
     const box = (name: string, cx: number, cy: number, cz: number, w: number, h: number, d: number): void => {
         primNode(body, name, primitives.box({ width: w, height: h, length: d }), paint, cx, cy, cz);
     };
@@ -491,7 +537,7 @@ function buildBodywork(body: Node, ki: number, colour: number): void {
  * front z ~0.92..0.96, rear z ~-0.43..-0.46; seat (0, 0.32, -0.25),
  * steering (0, 0.52, 0.1). */
 function buildBuggyBody(body: Node, colour: number): void {
-    const paint = standardMaterial(colour, 0.15, 0.12);
+    const paint = standardMaterial(colour, 0.15, 0.12, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
     const dark = standardMaterial(0x1a1d24, 0.15, 0.35);
     const box = (name: string, mat: Material, cx: number, cy: number, cz: number, w: number, h: number, d: number, rx: number = 0): void => {
         primNode(body, name, primitives.box({ width: w, height: h, length: d }), mat, cx, cy, cz, rx, 0, 0);
@@ -579,9 +625,12 @@ export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): 
         }
         // fix132 kart 7 绯焰: drop the spiky rear plates, nose fin and
         // front-corner spikes (see kart7DropTri); a clean procedural wing
-        // is added by buildBodywork below.
+        // is added by buildBodywork below. fix133: the predicate MUST be
+        // negated — filterBucketTriangles KEEPS triangles where keep()
+        // is true, and the shipped code passed kart7DropTri un-negated,
+        // keeping only the 245 spikes and dropping the whole body.
         if (ki === 7) {
-            const kept = filterBucketTriangles(b, (g) => kart7DropTri(b.hex, g));
+            const kept = filterBucketTriangles(b, (g) => !kart7DropTri(b.hex, g));
             if (kept) {
                 addMeshNode(body, 'body_' + eff.role, bucketMesh(kept), materialForRole(eff.role, hex));
             }
@@ -643,7 +692,15 @@ export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): 
         spin.layer = Layers.Enum.DEFAULT;
         spin.setParent(pivot);
         for (const b of buckets) {
-            addMeshNode(spin, 'tyre_' + b.role, bucketMesh(b), materialForRole(b.role, parseHex(b.hex)));
+            // fix133 kart 7 绯焰: the tyre buckets carry long fins (see
+            // kart7WheelFinTri) — drop them so only the tyre stays.
+            let bb = b;
+            if (ki === 7) {
+                const kept = filterBucketTriangles(b, (g) => !kart7WheelFinTri(g));
+                if (!kept) { continue; }
+                bb = kept;
+            }
+            addMeshNode(spin, 'tyre_' + b.role, bucketMesh(bb), materialForRole(b.role, parseHex(b.hex)));
         }
         if (needsRimPuck) {
             const rimR = 0.62 * center[1];
