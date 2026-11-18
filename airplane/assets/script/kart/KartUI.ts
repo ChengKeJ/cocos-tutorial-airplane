@@ -100,6 +100,12 @@ export class KartUI extends Component {
     private _resultsPanel: Node = null;
     private _resultsLabel: Label = null;
     private _resultsTitle: Label = null;
+    // results scrim: dims the live 3D world behind the standings so the
+    // player's kart and drift smoke don't strike through the text
+    // (same pattern as the menu scrim; drive127 found the reward line
+    // half-covered by the kart at the finish).
+    private _resultsScrim: Graphics = null;
+    private _resultsScrimNode: Node = null;
     private _pausePanel: Node = null;
 
     // touch state
@@ -237,6 +243,26 @@ export class KartUI extends Component {
         g.fill();
         if (this._menuScrimNode) {
             const t = this._menuScrimNode.getComponent(UITransform);
+            if (t) { t.setContentSize(w, h); }
+        }
+    }
+
+    /** Same dimming as the menu scrim, for the results panel. Drawn 25%
+     * oversize: the results panel pops in from scale 0.85, and an
+     * exactly-screen-sized rect would leave the rim undimmed mid-pop.
+     * Redrawn every time results are shown (visible size can change). */
+    private _redrawResultsScrim(): void {
+        if (!this._resultsScrim || !this._canvas) { return; }
+        const vs = view.getVisibleSize();
+        const w = (vs.width > 0 ? vs.width : 720) * 1.25;
+        const h = (vs.height > 0 ? vs.height : 1280) * 1.25;
+        const g = this._resultsScrim;
+        g.clear();
+        g.fillColor = new Color(10, 15, 25, 170);
+        g.rect(-w / 2, -h / 2, w, h);
+        g.fill();
+        if (this._resultsScrimNode) {
+            const t = this._resultsScrimNode.getComponent(UITransform);
             if (t) { t.setContentSize(w, h); }
         }
     }
@@ -411,6 +437,7 @@ export class KartUI extends Component {
         }
         this._resultsPanel.active = true;
         this.showHud(false);
+        this._redrawResultsScrim();
         // ceremony: panel pops in from 0.85, confetti rains for ~2.5 s
         this._resultsPanel.setScale(0.85, 0.85, 1);
         this._resultsPopT = 0.25;
@@ -809,6 +836,19 @@ export class KartUI extends Component {
         res.setPosition(0, 0, 0);
         this._resultsPanel = res;
         res.active = false;
+        // results scrim: same dimming as the menu scrim — without it the
+        // player's kart sits centre-screen behind the standings and the
+        // reward line, and drift smoke drifts across the panel. First
+        // child of the results panel, so it renders behind the confetti
+        // and every label/button. Sized in _redrawResultsScrim().
+        const rscrim = new Node('resultsScrim');
+        rscrim.layer = Layers.Enum.UI_2D;
+        rscrim.setParent(res);
+        rscrim.setPosition(0, 0, 0);
+        rscrim.addComponent(UITransform);
+        this._resultsScrimNode = rscrim;
+        this._resultsScrim = rscrim.addComponent(Graphics);
+        this._redrawResultsScrim();
         // confetti layer (behind the text, full screen)
         const cf = new Node('confetti');
         cf.layer = Layers.Enum.UI_2D;
@@ -817,6 +857,13 @@ export class KartUI extends Component {
         const ct = cf.addComponent(UITransform);
         ct.setContentSize(720, 1280);
         this._confetti = cf.addComponent(Graphics);
+        // solid backing behind the standings + reward lines: the scrim
+        // alone can't hide the bright kart / yellow dashes behind the
+        // text. The rows label is 8 rows + blank + reward = 10 lines at
+        // ~40 px pitch (measured off the drive127 results screenshot),
+        // so the block is ~400 px tall centred on y 60; the panel gives
+        // ~25 px of slack top and bottom.
+        this._makeBackingPanel(res, 'rowsPanel', 0, 60, 680, 450, 18);
         this._resultsTitle = this._makeLabel(res, 'title', 0, 330, 56, GOLD, '完赛！');
         this._resultsLabel = this._makeLabel(res, 'rows', 0, 60, 26, WHITE, '');
         this._makeButton(res, 'againBtn', 0, -260, 480, 110, '再来一局', 44,
