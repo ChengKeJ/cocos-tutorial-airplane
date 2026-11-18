@@ -1,5 +1,5 @@
 /**
- * Kart race manager for the Star Fighter hall kart game （飞车狂飙 v1.0.8).
+ * Kart race manager for the Star Fighter hall kart game （飞车狂飙 v1.0.9).
  *
  * Arcade spline model: each kart is (sTotal = unwrapped metres along the
  * centreline, d = lateral offset, heading = yaw vs the tangent, speed).
@@ -25,7 +25,7 @@ const { ccclass, property } = _decorator;
 const BEST_TIME_KEY = 'kart_best_time'; // 正赛 best (existing key, kept)
 const BEST_TIME_KEY_REV = 'kart_best_time_rev'; // 逆向 best
 const MODE_KEY = 'kart_mode'; // 'fwd' | 'rev', last chosen race direction
-const KART_VERSION = 'v1.0.8';
+const KART_VERSION = 'v1.0.9';
 const RAD2DEG = 180 / Math.PI;
 
 // Pass A (production feel): the old chase cam sat 11 m back / 4.2 m up, so
@@ -341,7 +341,7 @@ export class KartGame extends Component {
                 const pos = this.playerPosition;
                 if (this._lastPos > 0 && pos !== this._lastPos && this._raceTime > 3) {
                     if (this.ui) {
-                        this.ui.showToast(pos < this._lastPos ? '⬆ 超到第 ' + pos + ' 名！' : '⬇ 掉到第 ' + pos + ' 名');
+                        this.ui.showToast(pos < this._lastPos ? '⬆ 超到第 ' + pos + ' 名！' : '⬇ 掉到第 ' + pos + ' 名！');
                     }
                 }
                 this._lastPos = pos;
