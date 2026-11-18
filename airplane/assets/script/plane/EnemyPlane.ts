@@ -1,8 +1,9 @@
 
-import { _decorator, Component, Node, ITriggerEvent, Collider } from 'cc';
+import { _decorator, Component, ModelComponent, Node, ITriggerEvent, Collider } from 'cc';
 import { Constant } from '../framework/Constant';
 import { GameManager } from '../framework/GameManager';
 import { PoolManager } from '../framework/PoolManager';
+import { buildEnemyModel } from './EnemyModel';
 const { ccclass, property } = _decorator;
 
 /**
@@ -19,6 +20,9 @@ const { ccclass, property } = _decorator;
  * - HP per enemy (tanky / boss take several hits), hit flash (scale pop).
  * - Movement modes: straight / sine-wave / dive toward the player.
  * - Boss mode: huge scale, big HP, spread + aimed fire, HP reported to GameManager.
+ *
+ * v1.0.8 fix A: the prefab's FBX 'body' is hidden; each type shows its
+ * own procedural model from EnemyModel.ts (elite = same model + gold trim).
  */
 
 const OUTOFBOUNCE = 50;
@@ -58,6 +62,12 @@ export class EnemyPlane extends Component {
     private _flashTime = 0;
     private _bossFireTime = 0;
     private _bossAimTime = 0;
+
+    // v1.0.8 fix A: procedural per-type models (EnemyModel.ts). Pooled
+    // nodes are reused across types, so models are cached per node and
+    // toggled in show(); the prefab's FBX 'body' child is hidden once.
+    private _modelCache = new Map<string, Node>();
+    private _fbxHidden = false;
 
     onEnable () {
         const collider = this.getComponent(Collider);
@@ -133,6 +143,37 @@ export class EnemyPlane extends Component {
         // pooled nodes keep their old scale — always reset it here
         this.node.setScale(this._baseScale, this._baseScale, this._baseScale);
         this._baseX = this.node.position.x;
+        this._applyModel();
+    }
+
+    /** v1.0.8 fix A: show this spawn's procedural model (one per base
+     * type + gold trim for elites), hide the prefab's FBX 'body'. */
+    private _applyModel(): void {
+        if (!this._fbxHidden) {
+            this._fbxHidden = true;
+            const body = this.node.getChildByName('body');
+            if (body) {
+                body.active = false;
+            } else {
+                // Fallback: hide any non-procedural mesh child.
+                for (const c of this.node.children) {
+                    if (c.name !== 'procModel' && c.getComponent(ModelComponent)) {
+                        c.active = false;
+                    }
+                }
+            }
+        }
+        const elite = this._type >= 10;
+        const baseType = elite ? this._type - 10 : this._type;
+        const key = baseType + ':' + (elite ? 1 : 0);
+        this._modelCache.forEach((n) => { n.active = false; });
+        let m = this._modelCache.get(key);
+        if (!m) {
+            m = buildEnemyModel(baseType, elite);
+            m.setParent(this.node);
+            this._modelCache.set(key, m);
+        }
+        m.active = true;
     }
 
     public get isBoss(): boolean {
