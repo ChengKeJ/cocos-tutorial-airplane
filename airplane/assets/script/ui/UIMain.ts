@@ -52,12 +52,26 @@ const { ccclass, property } = _decorator;
  *   show a small line with the last touch world position, the plane
  *   position and the drag mode; the menu showed the bundle state
  *   (loading/ready/failed).
+ *
+ * v1.0.8 fix C (2026-11-18): relative drag — the old absolute
+ * finger-follow put the player's own plane (and its bullets) under
+ * the finger. Now touch-down anchors the drag and the plane lifts
+ * 5 world units above the finger, then follows the finger's movement
+ * delta; it never snaps to the finger position. Delta drag remains
+ * as the fallback when the camera mapping is unavailable.
  */
 
 const PLANE_MIN_X = -24;
 const PLANE_MAX_X = 24;
 const PLANE_MIN_Z = -8;
 const PLANE_MAX_Z = 20;
+
+// v1.0.8 fix C (relative drag): the plane rides this many world units
+// ABOVE the finger (screen-up = -Z), so the finger never covers the
+// plane or its bullets. ~5 units ≈ 200 device px at this camera —
+// comfortably clear of a fingertip (~2 units) without the plane
+// feeling detached from the hand.
+const DRAG_OFFSET_Z = 5;
 
 @ccclass('UIMain')
 export class UIMain extends Component {
@@ -88,6 +102,15 @@ export class UIMain extends Component {
     private _absChecked = false;
     private _absOk = false;
     private _lastMoveKey = '';
+
+    // v1.0.8 fix C: relative-drag anchors. The plane follows the
+    // finger's movement DELTA from the touch-down point (it never snaps
+    // to the finger), lifted DRAG_OFFSET_Z above it.
+    private _dragging = false;
+    private _dragAnchorLoc = { x: 0, y: 0 };
+    private _dragAnchorGround: Vec3 | null = null;
+    private _dragAnchorPlane = new Vec3();
+    private _dragLifted = new Vec3();
 
     start () {
         // Main Camera: same lookup GameManager uses for the screen shake.
@@ -211,7 +234,8 @@ export class UIMain extends Component {
     }
 
     private _inputTouchEnd(_a: any, _b?: any) {
-        // auto-fire stays on; nothing to stop
+        // auto-fire stays on; nothing to stop — just end the drag
+        this._endDrag();
     }
 
     private _nodeTouchStart(event: EventTouch) {
@@ -229,7 +253,8 @@ export class UIMain extends Component {
     }
 
     private _nodeTouchEnd(_event: EventTouch) {
-        // auto-fire stays on; nothing to stop
+        // auto-fire stays on; nothing to stop — just end the drag
+        this._endDrag();
     }
 
     private _handleTouchStart(touch: Touch) {
@@ -245,7 +270,7 @@ export class UIMain extends Component {
                 this.gameManager.playAudioEffect('button');
                 this.gameManager.gameStart();
                 if (this.gameManager.isGameStart) {
-                    this._movePlaneToTouch(touch);
+                    this._beginDrag(touch);
                 }
             } else {
                 // Stuck state: the menu is already hidden but the game never
@@ -265,7 +290,7 @@ export class UIMain extends Component {
             return;
         }
         // auto-fire is always on while playing — touch only moves the plane
-        this._movePlaneToTouch(touch);
+        this._beginDrag(touch);
     }
 
     private _handleTouchMove(touch: Touch) {
@@ -282,18 +307,50 @@ export class UIMain extends Component {
             return;
         }
         this._lastMoveKey = key;
-        this._movePlaneToTouch(touch);
+        this._dragTo(touch);
     }
 
-    /** Move the plane to the finger: absolute mapping first, delta fallback. */
-    private _movePlaneToTouch(touch: Touch) {
-        if (!this.playerPlane) {
+    /** v1.0.8 fix C — relative drag.
+     * Touch-down anchors the drag: the plane's position and the finger's
+     * ground point are recorded, and the plane immediately lifts
+     * DRAG_OFFSET_Z above the finger so it is never covered. Moves then
+     * apply the finger's movement DELTA to that lifted anchor — the
+     * plane never snaps to the finger position.
+     * Both touch channels deliver the same TOUCH_START; the second one
+     * is ignored while a drag is already in progress (otherwise the
+     * anchor would re-lift and the offset would double). */
+    private _beginDrag(touch: Touch) {
+        if (!this.playerPlane || this._dragging) {
             return;
         }
-        const world = this._worldFromTouch(touch);
-        if (world) {
-            this._setPlanePos(world.x, world.z);
+        const loc = touch.getLocation();
+        this._dragAnchorLoc = { x: loc.x, y: loc.y };
+        this._dragAnchorGround = this._groundFromTouch(touch);
+        this._dragAnchorPlane.set(this.playerPlane.position);
+        this._dragLifted.set(
+            this._dragAnchorPlane.x,
+            this._dragAnchorPlane.y,
+            this._dragAnchorPlane.z - DRAG_OFFSET_Z,
+        );
+        this._dragging = true;
+        this._setPlanePos(this._dragLifted.x, this._dragLifted.z);
+    }
+
+    /** Follow the finger's delta from the touch-down anchor. */
+    private _dragTo(touch: Touch) {
+        if (!this.playerPlane || !this._dragging) {
             return;
+        }
+        if (this._dragAnchorGround) {
+            const ground = this._groundFromTouch(touch);
+            if (ground) {
+                this._setPlanePos(
+                    this._dragLifted.x + (ground.x - this._dragAnchorGround.x),
+                    this._dragLifted.z + (ground.z - this._dragAnchorGround.z),
+                );
+                return;
+            }
+            // mapping broke mid-drag — fall through to the delta path
         }
         // Fallback: the old delta drag (kept working even when the camera
         // mapping is unavailable).
@@ -305,8 +362,11 @@ export class UIMain extends Component {
         );
     }
 
-    /**
-     * Map a touch onto the ground plane (y=0) the plane flies on.
+    private _endDrag() {
+        this._dragging = false;
+    }
+
+    /** Map a touch onto the ground plane (y=0) the plane flies on.
      * touch.getLocation() is in device pixels, bottom-left origin — exactly
      * what the render camera's screenToWorld expects (verified from the
      * 3.8.0 engine source), so it is fed straight in: no DPR scaling,
@@ -317,9 +377,8 @@ export class UIMain extends Component {
      * Returns null when the mapping cannot be trusted (the caller then
      * falls back to delta drag). A mapped point is sanity-checked against
      * a real touch before it is used; garbage re-arms calibration so the
-     * next touch retries instead of silently staying on delta drag.
-     */
-    private _worldFromTouch(touch: Touch): Vec3 | null {
+     * next touch retries instead of silently staying on delta drag. */
+    private _groundFromTouch(touch: Touch): Vec3 | null {
         if (!this._mainCamera) {
             return null;
         }
