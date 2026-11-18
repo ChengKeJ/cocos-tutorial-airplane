@@ -13,7 +13,7 @@
  * (the scene is unloaded when returning to the hall — never leak them).
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find } from 'cc';
+import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find, view } from 'cc';
 import { KartGame } from './KartGame';
 import { TRACK_DEFS } from './KartTrack';
 import { ITEM_NAMES, KartConstants } from './KartConstants';
@@ -71,6 +71,8 @@ export class KartUI extends Component {
 
     // panels
     private _menuPanel: Node = null;
+    private _menuScrim: Graphics = null;
+    private _menuScrimNode: Node = null;
     private _menuBestLabel: Label = null;
     private _trackBtnLabels: Label[] = [];
     private _trackDescLabel: Label = null;
@@ -189,6 +191,41 @@ export class KartUI extends Component {
         if (show) {
             this.showHud(false);
             this._refreshTrackUI();
+            this._redrawScrim();
+            this._setPlayerKartVisible(false);
+        } else {
+            this._setPlayerKartVisible(true);
+        }
+    }
+
+    /** Redraw the menu scrim to cover the whole visible screen at a
+     * stronger alpha. Called when the menu is built and every time it is
+     * shown (the visible size only changes on resize/orientation, but
+     * redrawing here costs nothing and stays correct). */
+    private _redrawScrim(): void {
+        if (!this._menuScrim || !this._canvas) { return; }
+        const vs = view.getVisibleSize();
+        const w = vs.width > 0 ? vs.width : 720;
+        const h = vs.height > 0 ? vs.height : 1280;
+        const g = this._menuScrim;
+        g.clear();
+        g.fillColor = new Color(10, 15, 25, 170);
+        g.rect(-w / 2, -h / 2, w, h);
+        g.fill();
+        if (this._menuScrimNode) {
+            const t = this._menuScrimNode.getComponent(UITransform);
+            if (t) { t.setContentSize(w, h); }
+        }
+    }
+
+    /** The parked player kart sits in front of the hint line and peeks
+     * above the start button in the menu backdrop — hide it while the
+     * menu is up, restore it when a race starts. */
+    private _setPlayerKartVisible(visible: boolean): void {
+        if (!this._game) { return; }
+        const player = this._game.karts && this._game.karts[0];
+        if (player && player.model && player.model.root) {
+            player.model.root.active = visible;
         }
     }
 
@@ -221,6 +258,9 @@ export class KartUI extends Component {
         if (!this._game) { return; }
         this._game.selectTrack(id);
         this._refreshTrackUI();
+        // the rebuild recreates the kart nodes (active again) — re-hide
+        // the player kart while the menu is still up.
+        this._setPlayerKartVisible(false);
     }
 
     public showHud(show: boolean) {
@@ -540,17 +580,18 @@ export class KartUI extends Component {
         // scrim: dim the live 3D world behind the menu so road dashes and
         // the player's kart don't strike through the menu text. First child
         // of the menu panel, so it renders behind every label/button; it has
-        // no touch handler, so taps still reach the buttons.
+        // no touch handler, so taps still reach the buttons. Sized in
+        // _redrawScrim() from the visible size — the old fixed 720x1280
+        // rect left the top/bottom bands undimmed on taller phones, and
+        // alpha 110 was too weak for the bright yellow centre dashes.
         const scrim = new Node('menuScrim');
         scrim.layer = Layers.Enum.UI_2D;
         scrim.setParent(menu);
         scrim.setPosition(0, 0, 0);
-        const st = scrim.addComponent(UITransform);
-        st.setContentSize(720, 1280);
-        const sg = scrim.addComponent(Graphics);
-        sg.fillColor = new Color(10, 15, 25, 110);
-        sg.rect(-360, -640, 720, 1280);
-        sg.fill();
+        scrim.addComponent(UITransform);
+        this._menuScrimNode = scrim;
+        this._menuScrim = scrim.addComponent(Graphics);
+        this._redrawScrim();
         this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
         // track select: two circuits, each playable fwd + reverse.
