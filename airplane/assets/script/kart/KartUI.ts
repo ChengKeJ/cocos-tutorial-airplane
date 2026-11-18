@@ -453,7 +453,7 @@ export class KartUI extends Component {
         this._countdownLabel.node.active = false;
         // countdown lights: 3 dots above the numeral, fill red per beat, green on GO
         for (let i = 0; i < 3; i++) {
-            const dot = this._makeLabel(this._canvas, 'countLight' + i, (i - 1) * 80, 300, 56, GREY, '●');
+            const dot = this._makeLabel(this._canvas, 'countLight' + i, (i - 1) * 105, 300, 80, GREY, '●');
             dot.node.active = false;
             this._countLights.push(dot);
         }
