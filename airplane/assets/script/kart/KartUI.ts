@@ -1,5 +1,5 @@
 /**
- * Kart HUD + touch controls for the hall kart game （飞车狂飙 v1.0.8).
+ * Kart HUD + touch controls for the hall kart game （飞车狂飙 v1.0.9).
  *
  * Touch (phones): left half = floating steer stick (push down = brake),
  * right side = DRIFT (hold) + ITEM (tap) buttons. Keyboard (desktop
@@ -449,7 +449,8 @@ export class KartUI extends Component {
         this._zoneLabel = this._makeLabel(hud, 'zoneLabel', 0, 540, 24, GREY, '');
         this._speedLabel = this._makeLabel(hud, 'speedLabel', 280, -520, 36, WHITE, '0 km/h');
         this._itemLabel = this._makeLabel(hud, 'itemLabel', 0, -520, 32, WHITE, '—');
-        this._countdownLabel = this._makeLabel(this._canvas, 'countdownLabel', 0, 150, 120, GOLD, '');
+        this._countdownLabel = this._makeLabel(this._canvas, 'countdownLabel', 0, 150, 56, GOLD, '');
+        (this._countdownLabel as any).isBold = true;
         this._countdownLabel.node.active = false;
         // countdown lights: 3 dots above the numeral, fill red per beat, green on GO
         for (let i = 0; i < 3; i++) {
@@ -505,7 +506,7 @@ export class KartUI extends Component {
         menu.setPosition(0, 0, 0);
         this._menuPanel = menu;
         menu.active = false;
-        this._makeLabel(menu, 'title', 0, 300, 72, GOLD, '飞车狂飙');
+        this._makeLabel(menu, 'title', 0, 300, 56, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 220, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
         this._menuBestLabel = this._makeLabel(menu, 'best', 0, 130, 28, GOLD, '');
         // mode select: 正赛 drives the circuit forward, 逆向 drives the
