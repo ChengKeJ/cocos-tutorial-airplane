@@ -148,6 +148,8 @@ export class KartGame extends Component {
     private _smokePos = new Vec3();
     private _shakeAmp = 0;
     private _lastCollideShake = -10;
+    // ---- Pass E presentation ----
+    private _lastPos = 0;
     // ---- Pass D audio ----
     private _bgmSrc: AudioSource = null;
     private _engineSrc: AudioSource = null;
@@ -347,6 +349,14 @@ export class KartGame extends Component {
             this._collideKarts();
             this._updateVisuals(dt);
             this._updateCamera(dt, false);
+            // position-change toasts (skip the opening scramble)
+            const pos = this.playerPosition;
+            if (this._lastPos > 0 && pos !== this._lastPos && this._raceTime > 3) {
+                if (this.ui) {
+                    this.ui.showToast(pos < this._lastPos ? '⬆ 超到第 ' + pos + ' 名！' : '⬇ 掉到第 ' + pos + ' 名');
+                }
+            }
+            this._lastPos = pos;
             return;
         }
         if (this.state === 'menu') {
@@ -366,6 +376,7 @@ export class KartGame extends Component {
         this._raceTime = 0;
         this._resultsShown = false;
         this._resultsT = 0;
+        this._lastPos = 0;
         this.state = 'countdown';
         this._startRaceAudio();
         if (this.ui) { this.ui.showMenu(false); this.ui.showResults(null); this.ui.showHud(false); this.ui.showPause(false); }
@@ -657,7 +668,10 @@ export class KartGame extends Component {
             k.lapStartT = this._raceTime;
             if (isPlayer) {
                 if (lap <= KartConstants.LAP_COUNT) {
-                    if (this.ui) { this.ui.showToast('第 ' + lap + ' 圈！'); }
+                    if (this.ui) {
+                        if (lap === KartConstants.LAP_COUNT) { this.ui.showBanner('🏁 最后一圈！', 2); }
+                        else { this.ui.showToast('第 ' + lap + ' 圈！'); }
+                    }
                 }
             }
             if (lap > KartConstants.LAP_COUNT && !k.finished) {
