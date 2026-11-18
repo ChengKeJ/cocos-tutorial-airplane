@@ -28,6 +28,10 @@
  * fix131: bucket recolour/bodywork overrides in code (BUCKET_OVERRIDES),
  * brighter driver, procedural rim discs for rim-less wheels, smaller
  * softer contact shadow — see the individual comments.
+ * fix132: glossy finishes (lower metallic + lower roughness — high
+ * metallic with no env map kills diffuse), kart 2 wing split out of the
+ * driver bucket, kart 7 spiky-rear triangle filter + procedural wing,
+ * kart 5 buggy rebuilt procedurally, brake lights, kart 3/7 bodywork.
  */
 
 import { Layers, Material, ModelComponent, Node, Vec3, primitives, utils } from 'cc';
@@ -80,14 +84,19 @@ function standardMaterial(hex: number, metallic: number, roughness: number): Mat
     return stdMaterial(hex, metallic, roughness, 0);
 }
 
-/** Finish per bucket role. Paint is glossy metallic (clear-coat feel);
- * tires matte rubber; rims chrome-ish; detail semi-gloss. */
+/** Finish per bucket role. fix132: the old paint finish (metallic 0.55 /
+ * roughness 0.25) rendered flat and dark — with no environment map /
+ * IBL in the scene, metallic kills ~55% of the diffuse and the only
+ * specular comes from the punctual sun/fill, so yellow paint went olive
+ * and white went grey. Gloss here comes from LOW metallic (keeps the
+ * diffuse) + LOW roughness (tight sun highlight): paint 0.15 / 0.12.
+ * Same for helmet / driver / rims / detail; tires stay matte rubber. */
 function materialForRole(role: string, hex: number): Material {
-    if (role === 'paint') { return standardMaterial(hex, 0.55, 0.25); }
-    if (role === 'driver') { return standardMaterial(hex, 0.4, 0.4); }
+    if (role === 'paint') { return standardMaterial(hex, 0.15, 0.12); }
+    if (role === 'driver') { return standardMaterial(hex, 0.15, 0.30); }
     if (role === 'tire') { return standardMaterial(hex, 0.0, 0.95); }
-    if (role === 'rim') { return standardMaterial(hex, 0.9, 0.25); }
-    return standardMaterial(hex, 0.3, 0.5); // detail
+    if (role === 'rim') { return standardMaterial(hex, 0.45, 0.18); }
+    return standardMaterial(hex, 0.15, 0.35); // detail
 }
 
 function parseHex(s: string): number {
@@ -115,12 +124,17 @@ export function driverColor(accent: number): number {
  * KartModelsData.ts, so a converter re-bake does not silently drop them:
  *  - kart 1 海蓝: the chassis/exhaust bucket is near-black (#180c19) and
  *    reads as a huge black cannon — lift to a readable slate purple.
- *  - kart 2 闪电: the floor/wing bucket is near-black (#000105) — bright
- *    blue, as on the original F1 model.
+ *  - kart 2 闪电: the floor/steering-column bucket is near-black
+ *    (#000105) — bright blue, as on the original F1 model. This is the
+ *    HELMET + floor, NOT the rear wing: the wing lives in the driver
+ *    bucket (#000f2b) and is split out separately in buildKartModel
+ *    (fix132) — the fix131 override never touched it, which is why the
+ *    wing stayed pale grey-blue.
  *  - kart 3 青竹: the blue cable buckets are part of the bodywork — they
  *    take the kart colour so the skeletal frame reads as a bodied kart.
- *  - kart 5 橙光: the big light-grey body buckets are the buggy's panels
- *    (not junk) — they take the kart colour so the buggy reads orange. */
+ *  - kart 5 橙光: UNUSED since fix132 — the baked body is skipped
+ *    entirely (rebuilt procedurally in buildBuggyBody); the entries are
+ *    kept so a re-bake / re-enable still recolours the panels. */
 const BUCKET_OVERRIDES: { [ki: number]: { [hex: string]: { role?: string; hex?: string } } } = {
     1: { '#180c19': { hex: '#5a4a7a' } },
     2: { '#000105': { hex: '#2a5fd0' } },
@@ -133,6 +147,112 @@ const BUCKET_OVERRIDES: { [ki: number]: { [hex: string]: { role?: string; hex?: 
 export function bucketOverride(ki: number, b: KartModelBucket): { role: string; hex: string } {
     const ov = BUCKET_OVERRIDES[ki] && BUCKET_OVERRIDES[ki][b.hex.toLowerCase()];
     return { role: (ov && ov.role) ? ov.role : b.role, hex: (ov && ov.hex) ? ov.hex : b.hex };
+}
+
+/** fix132 kart 2 闪电: the rear wing lives in the driver bucket (the
+ * converter stripped the whole dark-navy material as "driver"). The wing
+ * is the only driver-bucket geometry behind z -0.6 (33 of 150 tris);
+ * everything else (figure, seat) is at z > -0.6. Exported for the node
+ * tests. */
+export function kart2WingTri(cz: number): boolean {
+    return cz < -0.6;
+}
+
+/** One decoded triangle of a bucket: centroid + max vertex height. */
+interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; }
+
+/** fix132 kart 7 绯焰: drop the spiky rear (245 of 1242 body tris,
+ * verified against the baked data):
+ *  R1 — the jumbled rear plates + vertical fins (anything behind z -0.40
+ *  reaching above y 0.32; the flat rear deck at y 0.28 survives);
+ *  R2 — the black nose-fin blade (the #101010 bucket's only geometry
+ *  above y 0.55, at z 0.18..0.26);
+ *  R3 — the front-corner spikes (past z 0.98, |x| > 0.30).
+ * Exported for the node tests. */
+export function kart7DropTri(hex: string, g: TriGeom): boolean {
+    if (g.cz < -0.40 && g.maxVy > 0.32) { return true; }
+    if (hex.toLowerCase() === '#101010' && g.maxVy > 0.55) { return true; }
+    if (g.cz > 0.98 && Math.abs(g.cx) > 0.30) { return true; }
+    return false;
+}
+
+/** bytes -> base64 (inverse of b64ToBytes, same alphabet; used when a
+ * bucket's index list is rebuilt by the triangle filters below). */
+function bytesToB64(bytes: Uint8Array): string {
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+        const a = bytes[i];
+        const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
+        const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
+        out += B64_ALPHABET[a >> 2];
+        out += B64_ALPHABET[((a & 3) << 4) | (b >> 4)];
+        out += i + 1 < bytes.length ? B64_ALPHABET[((b & 15) << 2) | (c >> 6)] : '=';
+        out += i + 2 < bytes.length ? B64_ALPHABET[c & 63] : '=';
+    }
+    return out;
+}
+
+/** Walk a bucket's triangles, calling fn(geom, i0, i1, i2) per triangle.
+ * Positions are Int16 mm, indices Uint16 — same decoding as bucketMesh. */
+function forEachTri(b: KartModelBucket, fn: (g: TriGeom, a: number, c: number, d: number) => void): void {
+    const posB = b64ToBytes(b.pos);
+    const idxB = b64ToBytes(b.idx);
+    const comp = (vi: number, off: number): number => {
+        let v = posB[vi * 6 + off] | (posB[vi * 6 + off + 1] << 8);
+        if (v >= 32768) { v -= 65536; }
+        return v / 1000;
+    };
+    const idxCount = Math.floor(idxB.length / 2);
+    for (let t = 0; t + 2 < idxCount; t += 3) {
+        const a = idxB[t * 2] | (idxB[t * 2 + 1] << 8);
+        const c = idxB[t * 2 + 2] | (idxB[t * 2 + 3] << 8);
+        const d = idxB[t * 2 + 4] | (idxB[t * 2 + 5] << 8);
+        const x0 = comp(a, 0), y0 = comp(a, 2), z0 = comp(a, 4);
+        const x1 = comp(c, 0), y1 = comp(c, 2), z1 = comp(c, 4);
+        const x2 = comp(d, 0), y2 = comp(d, 2), z2 = comp(d, 4);
+        fn({
+            cx: (x0 + x1 + x2) / 3, cy: (y0 + y1 + y2) / 3, cz: (z0 + z1 + z2) / 3,
+            maxVy: Math.max(y0, y1, y2),
+        }, a, c, d);
+    }
+}
+
+/** Encode a kept index list back to base64 (Uint16 little-endian). */
+function encodeIdx(idxs: number[]): string {
+    const bytes = new Uint8Array(idxs.length * 2);
+    for (let i = 0; i < idxs.length; i++) {
+        bytes[i * 2] = idxs[i] & 0xff;
+        bytes[i * 2 + 1] = (idxs[i] >> 8) & 0xff;
+    }
+    return bytesToB64(bytes);
+}
+
+/** Rebuild a bucket keeping only triangles where keep() is true.
+ * Positions/normals are unchanged (unreferenced verts are harmless);
+ * n becomes the kept triangle count. Returns null when nothing is kept.
+ * The new idx length changes the bucketMesh cache key, so the filtered
+ * mesh never collides with the unfiltered one. Exported for the node
+ * tests (they verify the base64 round-trip without an engine). */
+export function filterBucketTriangles(b: KartModelBucket, keep: (g: TriGeom) => boolean): KartModelBucket | null {
+    const kept: number[] = [];
+    forEachTri(b, (g, a, c, d) => { if (keep(g)) { kept.push(a, c, d); } });
+    if (kept.length === 0) { return null; }
+    return { role: b.role, hex: b.hex, pos: b.pos, nor: b.nor, idx: encodeIdx(kept), n: kept.length / 3 };
+}
+
+/** Split a bucket's triangles into two buckets by a predicate (true =
+ * the split-out part). The kept bucket keeps the original role/hex; the
+ * split bucket is returned with role 'paint' so the caller can shade it
+ * as bodywork. Returns [kept, split | null]. Exported for the node
+ * tests. */
+export function splitBucketTriangles(b: KartModelBucket, split: (g: TriGeom) => boolean): [KartModelBucket, KartModelBucket | null] {
+    const kept: number[] = [];
+    const out: number[] = [];
+    forEachTri(b, (g, a, c, d) => { (split(g) ? out : kept).push(a, c, d); });
+    const keptB: KartModelBucket = { role: b.role, hex: b.hex, pos: b.pos, nor: b.nor, idx: encodeIdx(kept), n: kept.length / 3 };
+    const splitB: KartModelBucket | null = out.length === 0 ? null
+        : { role: 'paint', hex: b.hex, pos: b.pos, nor: b.nor, idx: encodeIdx(out), n: out.length / 3 };
+    return [keptB, splitB];
 }
 
 /** Vertex count of a baked bucket (pos = base64 of 6 bytes per vertex). */
@@ -253,7 +373,7 @@ function buildDriver(body: Node, seat: number[], steer: number[], accent: number
         minPos: new Vec3(-0.13, -0.13, -0.13),
         maxPos: new Vec3(0.13, 0.13, 0.13),
     });
-    const helm = addMeshNode(body, 'helmet', helmMesh, standardMaterial(helmetHex, 0.55, 0.25));
+    const helm = addMeshNode(body, 'helmet', helmMesh, standardMaterial(helmetHex, 0.15, 0.12));
     helm.setPosition(sx, sy + 0.40, sz + 0.02);
     // arms: thin cylinders aimed shoulder -> glove (Euler YXZ: pitch =
     // acos(dy/len), yaw = atan2(dx, dz); see Quat.fromEuler order)
@@ -298,30 +418,126 @@ function rimDiscMesh(radius: number, height: number): any {
     return m;
 }
 
+/** One procedural part from a cc primitive (box / cylinder / sphere):
+ * builds the mesh with exact bounds (bounds follow the node scale, so
+ * scaled parts still cull correctly) and adds it as a child node.
+ * Rotation is in degrees (Euler); scale is applied to the node. Used by
+ * the procedural bodywork (kart 3 panels, kart 7 wing, kart 5 buggy)
+ * and the brake lights. */
+function primNode(parent: Node, name: string, prim: any, mat: Material, x: number, y: number, z: number, rx: number = 0, ry: number = 0, rz: number = 0, sx: number = 1, sy: number = 1, sz: number = 1): Node {
+    const p = prim.positions as number[];
+    let minX = 1e9, minY = 1e9, minZ = 1e9;
+    let maxX = -1e9, maxY = -1e9, maxZ = -1e9;
+    for (let i = 0; i < p.length; i += 3) {
+        if (p[i] < minX) { minX = p[i]; }
+        if (p[i] > maxX) { maxX = p[i]; }
+        if (p[i + 1] < minY) { minY = p[i + 1]; }
+        if (p[i + 1] > maxY) { maxY = p[i + 1]; }
+        if (p[i + 2] < minZ) { minZ = p[i + 2]; }
+        if (p[i + 2] > maxZ) { maxZ = p[i + 2]; }
+    }
+    const mesh = utils.MeshUtils.createMesh({
+        positions: prim.positions, normals: prim.normals, uvs: prim.uvs,
+        indices: prim.indices,
+        minPos: new Vec3(minX * sx, minY * sy, minZ * sz),
+        maxPos: new Vec3(maxX * sx, maxY * sy, maxZ * sz),
+    });
+    const n = addMeshNode(parent, name, mesh, mat);
+    n.setPosition(x, y, z);
+    if (rx !== 0 || ry !== 0 || rz !== 0) { n.setRotationFromEuler(rx, ry, rz); }
+    if (sx !== 1 || sy !== 1 || sz !== 1) { n.setScale(sx, sy, sz); }
+    return n;
+}
+
 /** PBR bodywork panels for karts whose baked model is an exposed frame
  * (kart 3 青竹): nose, side pods, rear deck and a front wing, all in the
  * kart/paint colour so they recolour with paints. Positions are in the
  * kart's local frame (forward +Z, ground y 0); the panels wrap the
- * frame rails (x +-0.39) and sit between the wheels (x +-0.68..0.73). */
+ * frame rails (x +-0.39) and sit between the wheels (x +-0.68..0.73).
+ * fix132: kart 7 绯焰 also gets procedural bodywork — a clean rear wing
+ * on an extended rear deck (its baked wing was filtered out). */
 function buildBodywork(body: Node, ki: number, colour: number): void {
-    if (ki !== 3) { return; }
-    const paint = standardMaterial(colour, 0.55, 0.25);
+    if (ki !== 3 && ki !== 7) { return; }
+    const paint = standardMaterial(colour, 0.15, 0.12);
     const box = (name: string, cx: number, cy: number, cz: number, w: number, h: number, d: number): void => {
-        const prim = primitives.box({ width: w, height: h, length: d });
-        const mesh = utils.MeshUtils.createMesh({
-            positions: prim.positions, normals: prim.normals, uvs: prim.uvs,
-            indices: prim.indices,
-            minPos: new Vec3(-w / 2, -h / 2, -d / 2),
-            maxPos: new Vec3(w / 2, h / 2, d / 2),
-        });
-        const n = addMeshNode(body, name, mesh, paint);
-        n.setPosition(cx, cy, cz);
+        primNode(body, name, primitives.box({ width: w, height: h, length: d }), paint, cx, cy, cz);
     };
-    box('panel_nose', 0, 0.24, 0.72, 0.42, 0.16, 0.42);
-    box('panel_podL', -0.40, 0.22, 0.05, 0.24, 0.16, 1.05);
-    box('panel_podR', 0.40, 0.22, 0.05, 0.24, 0.16, 1.05);
-    box('panel_deck', 0, 0.26, -0.72, 0.46, 0.14, 0.42);
-    box('panel_wing', 0, 0.14, 0.98, 1.05, 0.05, 0.16);
+    if (ki === 3) {
+        box('panel_nose', 0, 0.24, 0.72, 0.42, 0.16, 0.42);
+        box('panel_podL', -0.40, 0.22, 0.05, 0.24, 0.16, 1.05);
+        box('panel_podR', 0.40, 0.22, 0.05, 0.24, 0.16, 1.05);
+        box('panel_deck', 0, 0.26, -0.72, 0.46, 0.14, 0.42);
+        box('panel_wing', 0, 0.14, 0.98, 1.05, 0.05, 0.16);
+        return;
+    }
+    // kart 7: clean rear wing on an extended rear deck. The deck
+    // extension (x ±0.35) clears the rear tires (x ±0.49, inner edge
+    // ~0.37); endplates sit just inboard of the tires.
+    box('wing_deck', 0, 0.28, -0.68, 0.70, 0.08, 0.30);
+    box('wing_plane', 0, 0.47, -0.78, 0.72, 0.05, 0.26);
+    box('wing_endL', -0.34, 0.45, -0.78, 0.03, 0.20, 0.26);
+    box('wing_endR', 0.34, 0.45, -0.78, 0.03, 0.20, 0.26);
+    box('wing_strutL', -0.18, 0.39, -0.78, 0.05, 0.14, 0.05);
+    box('wing_strutR', 0.18, 0.39, -0.78, 0.05, 0.14, 0.05);
+}
+
+/** fix132 kart 5 橙光: the baked buggy body is rebuilt from scratch in
+ * code — a dune buggy with a clean silhouette: floor pan, sloped hood,
+ * cockpit tub, rear deck + dark engine cover, a roll cage that clears
+ * the helmet (top y 0.88 vs helmet top 0.85), fender domes over all four
+ * wheels, a front bumper bar, headlights and a brake light. All body
+ * parts use the kart/paint colour so paints still recolour the buggy;
+ * the engine cover, cage and bumper stay dark. Wheel centres (baked):
+ * front z ~0.92..0.96, rear z ~-0.43..-0.46; seat (0, 0.32, -0.25),
+ * steering (0, 0.52, 0.1). */
+function buildBuggyBody(body: Node, colour: number): void {
+    const paint = standardMaterial(colour, 0.15, 0.12);
+    const dark = standardMaterial(0x1a1d24, 0.15, 0.35);
+    const box = (name: string, mat: Material, cx: number, cy: number, cz: number, w: number, h: number, d: number, rx: number = 0): void => {
+        primNode(body, name, primitives.box({ width: w, height: h, length: d }), mat, cx, cy, cz, rx, 0, 0);
+    };
+    // floor pan + sloped hood (positive X rotation tips the +Z end down,
+    // so the nose sits lower than the cowl)
+    box('buggy_floor', paint, 0, 0.14, 0.15, 0.72, 0.08, 1.75);
+    box('buggy_hood', paint, 0, 0.25, 0.65, 0.60, 0.10, 0.80, 12);
+    // cockpit tub + rear deck + dark engine cover
+    box('buggy_tub', paint, 0, 0.22, -0.18, 0.70, 0.22, 0.85);
+    box('buggy_deck', paint, 0, 0.30, -0.62, 0.68, 0.10, 0.30);
+    box('buggy_engine', dark, 0, 0.38, -0.60, 0.50, 0.12, 0.28);
+    // roll cage: two hoops (front z -0.05, rear z -0.48) — verticals +
+    // top bar; top y 0.88 clears the helmet (top 0.85)
+    const hoop = (hz: number, tag: string): void => {
+        for (const side of [-1, 1]) {
+            primNode(body, 'cage_' + tag + (side < 0 ? 'L' : 'R'),
+                primitives.cylinder(0.035, 0.035, 0.58, { radialSegments: 8 }),
+                dark, side * 0.30, 0.59, hz);
+        }
+        primNode(body, 'cage_top_' + tag,
+            primitives.cylinder(0.035, 0.035, 0.60, { radialSegments: 8 }),
+            dark, 0, 0.88, hz, 0, 0, 90);
+    };
+    hoop(-0.05, 'front');
+    hoop(-0.48, 'rear');
+    // fender domes over the four wheels (baked centres)
+    const wheels: Array<[number, number]> = [[0.355, 0.92], [-0.328, 0.959], [0.401, -0.463], [-0.405, -0.428]];
+    for (let i = 0; i < wheels.length; i++) {
+        primNode(body, 'fender_' + i,
+            primitives.sphere(0.30, { segments: 12 }),
+            paint, wheels[i][0], 0.30, wheels[i][1], 0, 0, 0, 1, 0.55, 1.15);
+    }
+    // front bumper bar + headlights + brake light (unlit: they must glow)
+    primNode(body, 'buggy_bumper',
+        primitives.cylinder(0.04, 0.04, 0.70, { radialSegments: 8 }),
+        dark, 0, 0.18, 1.02, 0, 0, 90);
+    const lamp = MeshBuilder.unlitMaterial(0xfff2b0);
+    for (const side of [-1, 1]) {
+        primNode(body, 'buggy_light_' + (side < 0 ? 'L' : 'R'),
+            primitives.cylinder(0.05, 0.05, 0.04, { radialSegments: 12 }),
+            lamp, side * 0.20, 0.24, 1.00, 90, 0, 0);
+    }
+    primNode(body, 'brake_light',
+        primitives.cylinder(0.055, 0.055, 0.05, { radialSegments: 12 }),
+        MeshBuilder.unlitMaterial(0xff2a2a), 0, 0.30, -0.78, 90, 0, 0);
 }
 
 /** Build one kart from its roster entry + baked licensed model.
@@ -345,11 +561,58 @@ export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): 
     for (const b of data.body) {
         const eff = bucketOverride(ki, b);
         const hex = eff.role === 'paint' ? colour : eff.role === 'driver' ? driverColor(accent) : parseHex(eff.hex);
+        // fix132 kart 5 橙光: the baked body is a junk pile (recolouring
+        // exhausted) — the buggy is rebuilt procedurally in buildBuggyBody
+        // below; skip every baked body bucket. Wheels / seat / steer /
+        // driver stay baked.
+        if (ki === 5) { continue; }
+        // fix132 kart 2 闪电: the rear wing is inside the driver bucket
+        // (see kart2WingTri) — split it out so it takes the kart colour
+        // instead of the white driver colour.
+        if (ki === 2 && eff.role === 'driver') {
+            const parts = splitBucketTriangles(b, (g) => kart2WingTri(g.cz));
+            addMeshNode(body, 'body_driver', bucketMesh(parts[0]), materialForRole('driver', hex));
+            if (parts[1]) {
+                addMeshNode(body, 'body_wing', bucketMesh(parts[1]), materialForRole('paint', colour));
+            }
+            continue;
+        }
+        // fix132 kart 7 绯焰: drop the spiky rear plates, nose fin and
+        // front-corner spikes (see kart7DropTri); a clean procedural wing
+        // is added by buildBodywork below.
+        if (ki === 7) {
+            const kept = filterBucketTriangles(b, (g) => kart7DropTri(b.hex, g));
+            if (kept) {
+                addMeshNode(body, 'body_' + eff.role, bucketMesh(kept), materialForRole(eff.role, hex));
+            }
+            continue;
+        }
         addMeshNode(body, 'body_' + eff.role, bucketMesh(b), materialForRole(eff.role, hex));
     }
 
-    // procedural bodywork for the exposed-frame kart (kart 3 青竹)
+    // procedural bodywork for the exposed-frame kart (kart 3 青竹) and
+    // the replacement rear wing (kart 7 绯焰)
     buildBodywork(body, ki, colour);
+
+    // fix132 kart 5 橙光: procedural dune-buggy body (replaces the baked
+    // junk pile — see buildBuggyBody)
+    if (ki === 5) { buildBuggyBody(body, colour); }
+
+    // fix132: small unlit red brake light on the rear face so the player
+    // kart reads at race distance. (y, z) per kart = the baked body's
+    // rearmost point at tail-light height, measured from KartModelsData
+    // (rear-face y 0.2..0.4, z = zMin - 0.02); kart 5's buggy adds its
+    // own light in buildBuggyBody.
+    if (ki !== 5) {
+        const REAR_LIGHT: Array<[number, number]> = [
+            [0.24, -0.83], [0.28, -0.69], [0.23, -1.07], [0.23, -0.94],
+            [0.28, -1.07], [0, 0], [0.30, -1.07], [0.37, -1.07],
+        ];
+        const rl = REAR_LIGHT[ki];
+        primNode(body, 'brake_light',
+            primitives.cylinder(0.055, 0.055, 0.05, { radialSegments: 12 }),
+            MeshBuilder.unlitMaterial(0xff2a2a), 0, rl[0], rl[1], 90, 0, 0);
+    }
 
     // driver (kart 2 闪电 has a built-in driver figure in the model)
     const hasBuiltInDriver = data.body.some((b) => b.role === 'driver');
@@ -384,9 +647,9 @@ export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): 
         }
         if (needsRimPuck) {
             const rimR = 0.62 * center[1];
-            const rim = addMeshNode(spin, 'rim_puck', rimDiscMesh(rimR, 0.30), standardMaterial(0xd7dae0, 0.85, 0.30));
+            const rim = addMeshNode(spin, 'rim_puck', rimDiscMesh(rimR, 0.30), standardMaterial(0xd7dae0, 0.45, 0.20));
             rim.setRotationFromEuler(0, 0, 90);
-            const hub = addMeshNode(spin, 'rim_hub', rimDiscMesh(rimR * 0.45, 0.34), standardMaterial(0x2a2d33, 0.6, 0.4));
+            const hub = addMeshNode(spin, 'rim_hub', rimDiscMesh(rimR * 0.45, 0.34), standardMaterial(0x2a2d33, 0.4, 0.35));
             hub.setRotationFromEuler(0, 0, 90);
         }
         return pivot;
