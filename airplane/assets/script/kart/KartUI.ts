@@ -510,7 +510,7 @@ export class KartUI extends Component {
         this._resultsPanel.active = true;
         this.showHud(false);
         this._redrawResultsScrim();
-        // ceremony: panel pops in from 0.85, confetti rains for ~2.5 s
+        // ceremony: panel pops in from 0.85, confetti rains while it is up
         this._resultsPanel.setScale(0.85, 0.85, 1);
         this._resultsPopT = 0.25;
         this._startConfetti();
@@ -1169,19 +1169,21 @@ export class KartUI extends Component {
                 round: i % 3 === 0,
             });
         }
-        // fix131: 8 s of continuous rain (was 3.5 s, which expired before
-        // the slow headless harness screenshotted the results) — parts
-        // respawn at the top while it rains, so the screen is never empty.
-        this._confettiT = 8;
+        // fix132: no countdown — the rain lasts while the results panel
+        // is up (the old 8 s countdown expired before the slow headless
+        // clock showed the panel; the probe found 0 parts at 4 s).
+        // _confettiT is now elapsed time, driving the sideways sway.
+        this._confettiT = 0;
     }
 
     private _updateConfetti(dt: number): void {
         if (!this._confetti) { return; }
-        if (this._confettiT <= 0) {
+        // rain while the results panel is up; once it hides, clear once
+        if (!this._resultsPanel || !this._resultsPanel.active) {
             if (this._confettiParts.length > 0) { this._confettiParts = []; this._confetti.clear(); }
             return;
         }
-        this._confettiT -= dt;
+        this._confettiT += dt;
         const g = this._confetti;
         g.clear();
         for (const p of this._confettiParts) {
