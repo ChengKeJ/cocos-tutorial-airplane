@@ -1,5 +1,5 @@
 
-import { _decorator, Component, ModelComponent, Node, ITriggerEvent, Collider } from 'cc';
+import { _decorator, Color, Component, Material, ModelComponent, Node, Vec3, ITriggerEvent, Collider } from 'cc';
 import { Constant } from '../framework/Constant';
 import { GameManager } from '../framework/GameManager';
 import { PoolManager } from '../framework/PoolManager';
@@ -21,11 +21,35 @@ const { ccclass, property } = _decorator;
  * - Movement modes: straight / sine-wave / dive toward the player.
  * - Boss mode: huge scale, big HP, spread + aimed fire, HP reported to GameManager.
  *
+ * Hit feedback (2026-11-18): a non-lethal hit also swaps the visible
+ * procedural model's materials to white for ~0.12 s (restored on expiry,
+ * death, and pooled reuse — a reused enemy never stays white) and
+ * spawns a small impact burst at the nose via GameManager.createHitEffect.
+ * The death explosion is untouched; damage / HP / balance are unchanged.
+ *
  * v1.0.8 fix A: the prefab's FBX 'body' is hidden; each type shows its
  * own procedural model from EnemyModel.ts (elite = same model + gold trim).
  */
 
 const OUTOFBOUNCE = 50;
+
+// White-flash length on a non-lethal hit (seconds). The scale pop
+// alongside it is 0.09 s; the white flash lingers a touch longer so
+// the hit reads even on the big Boss model.
+const HIT_FLASH_TIME = 0.12;
+
+// One shared white unlit material for the hit flash, created lazily.
+// It is never mutated after creation, so sharing it across enemies is
+// safe; the original per-model materials are restored, not modified.
+let _flashWhiteMat: Material | null = null;
+function flashWhiteMaterial(): Material {
+    if (!_flashWhiteMat) {
+        _flashWhiteMat = new Material();
+        _flashWhiteMat.initialize({ effectName: 'builtin-unlit' });
+        _flashWhiteMat.setProperty('mainColor', new Color(255, 255, 255, 255));
+    }
+    return _flashWhiteMat;
+}
 
 export interface EnemyShowOptions {
     hp?: number;
@@ -68,6 +92,12 @@ export class EnemyPlane extends Component {
     // toggled in show(); the prefab's FBX 'body' child is hidden once.
     private _modelCache = new Map<string, Node>();
     private _fbxHidden = false;
+
+    // Hit-feedback flash: the visible model's meshes + their original
+    // materials, so a hit can swap in the shared white material and
+    // swap back. Rebuilt in _applyModel() whenever the model changes.
+    private _flashComps: { comp: ModelComponent; origMat: Material }[] = [];
+    private _colorFlashTime = 0;
 
     onEnable () {
         const collider = this.getComponent(Collider);
@@ -118,6 +148,14 @@ export class EnemyPlane extends Component {
             }
         }
 
+        // white-flash expiry: restore the model's original materials
+        if (this._colorFlashTime > 0) {
+            this._colorFlashTime -= deltaTime;
+            if (this._colorFlashTime <= 0) {
+                this._restoreFlash();
+            }
+        }
+
         if (!this._isBoss && movePos > OUTOFBOUNCE) {
             PoolManager.instance().putNode(this.node);
             // this.node.destroy();
@@ -137,12 +175,16 @@ export class EnemyPlane extends Component {
         this._type = opts.type !== undefined ? opts.type : Constant.EnemyType.TYPE1;
         this._sineTime = 0;
         this._flashTime = 0;
+        this._colorFlashTime = 0;
         this._bossFireTime = 0;
         this._bossAimTime = 0;
         this._currCreateBulletTime = 0;
         // pooled nodes keep their old scale — always reset it here
         this.node.setScale(this._baseScale, this._baseScale, this._baseScale);
         this._baseX = this.node.position.x;
+        // a pooled node reused mid-flash must never stay white; restore
+        // BEFORE _applyModel() rebuilds the flash cache for the new model
+        this._restoreFlash();
         this._applyModel();
     }
 
@@ -174,6 +216,52 @@ export class EnemyPlane extends Component {
             this._modelCache.set(key, m);
         }
         m.active = true;
+        // rebuild the flash cache for the now-visible model: its meshes
+        // + their original materials, so a hit flash can swap in white
+        // and back. The materials are per-model instances (MeshBuilder
+        // creates them per build), never shared with another enemy.
+        this._flashComps.length = 0;
+        for (const r of m.getComponentsInChildren(ModelComponent)) {
+            const orig = r.getMaterial(0);
+            if (orig) { this._flashComps.push({ comp: r, origMat: orig }); }
+        }
+    }
+
+    /** Swap the visible model's materials to the shared white material
+     * for HIT_FLASH_TIME; update() restores the originals on expiry. */
+    private _startHitFlash(): void {
+        const white = flashWhiteMaterial();
+        for (const f of this._flashComps) {
+            f.comp.setMaterial(white, 0);
+        }
+        this._colorFlashTime = HIT_FLASH_TIME;
+    }
+
+    /** Restore the model's original materials after a white flash.
+     * Idempotent — safe to call from show()/_die() even when no flash
+     * is active, so a pooled node can never stay white. */
+    private _restoreFlash(): void {
+        this._colorFlashTime = 0;
+        for (const f of this._flashComps) {
+            f.comp.setMaterial(f.origMat, 0);
+        }
+    }
+
+    /** Non-lethal hit feedback: scale pop (existing) + white flash on
+     * the procedural model + a small impact burst at the nose. This is
+     * presentation only — damage, HP and balance are untouched. */
+    private _hitSurvived(): void {
+        this.node.setScale(this._baseScale * 1.18, this._baseScale * 1.18, this._baseScale * 1.18);
+        this._flashTime = 0.09;
+        this._startHitFlash();
+        const pos = this.node.position;
+        this._gameManager.createHitEffect(
+            new Vec3(pos.x, pos.y, pos.z + 1.5 * this._baseScale),
+            Math.min(0.45 * this._baseScale, 0.8),
+        );
+        if (this._isBoss) {
+            this._gameManager.onBossDamaged(this._hp, this._maxHp);
+        }
     }
 
     public get isBoss(): boolean {
@@ -198,11 +286,7 @@ export class EnemyPlane extends Component {
         if (this._hp <= 0) {
             this._die();
         } else {
-            this.node.setScale(this._baseScale * 1.18, this._baseScale * 1.18, this._baseScale * 1.18);
-            this._flashTime = 0.09;
-            if (this._isBoss) {
-                this._gameManager.onBossDamaged(this._hp, this._maxHp);
-            }
+            this._hitSurvived();
         }
     }
 
@@ -228,12 +312,7 @@ export class EnemyPlane extends Component {
             if (this._hp <= 0) {
                 this._die();
             } else {
-                // hit flash: scale pop + sound handled by the bullet impact
-                this.node.setScale(this._baseScale * 1.18, this._baseScale * 1.18, this._baseScale * 1.18);
-                this._flashTime = 0.09;
-                if (this._isBoss) {
-                    this._gameManager.onBossDamaged(this._hp, this._maxHp);
-                }
+                this._hitSurvived();
             }
         } else if (collisionGroup === Constant.CollisionType.SELF_PLANE) {
             // ramming destroys the enemy outright (player damage is handled by SelfPlane)
@@ -242,6 +321,7 @@ export class EnemyPlane extends Component {
     }
 
     private _die() {
+        this._restoreFlash();
         this._gameManager.playAudioEffect('enemy');
         this._gameManager.createEnemyEffect(this.node.position);
         this._gameManager.onEnemyKilled(this._type, this._score, this.node.position, this._isBoss);
