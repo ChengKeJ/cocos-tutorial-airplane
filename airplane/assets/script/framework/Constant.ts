@@ -18,11 +18,11 @@ const { ccclass, property } = _decorator;
 
 export class Constant{
     public static EnemyType = {
-        TYPE1: 1, // straight diver (plane02 model)
-        TYPE2: 2, // sine-wave mover (plane03 model)
-        TYPE3: 3, // tanky slow (plane02 model, big scale, multi HP)
-        TYPE4: 4, // fast small dart (plane03 model, small scale)
-        BOSS: 5,  // wave-5 boss (plane03 model, huge scale)
+        TYPE1: 1, // straight diver (procedural swept-wing jet, steel blue)
+        TYPE2: 2, // sine-wave mover (procedural delta wing, teal)
+        TYPE3: 3, // tanky slow (procedural armoured gunship, gunmetal/orange)
+        TYPE4: 4, // fast small dart (procedural needle, crimson)
+        BOSS: 5,  // wave-5 boss (procedural double-deck carrier, purple/gold)
     };
 
     public static MoveMode = {
