@@ -25,6 +25,10 @@ const GREY = new Color(170, 170, 170, 255);
 const RED = new Color(255, 90, 90, 255);
 const STICK_RADIUS = 60;
 
+// Decorative emoji per track, in TRACK_DEFS order (🌊 sunset, 🌵 canyon).
+// Module-level so _buildPanels and _refreshTrackUI use the same icons.
+const TRACK_ICONS = ['🌊', '🌵'];
+
 function fmtTime(t: number): string {
     if (t <= 0) { return '0:00.0'; }
     const m = Math.floor(t / 60);
@@ -194,7 +198,8 @@ export class KartUI extends Component {
         const sel = this._game.trackId;
         for (let i = 0; i < TRACK_DEFS.length && i < this._trackBtnLabels.length; i++) {
             const d = TRACK_DEFS[i];
-            this._trackBtnLabels[i].string = (d.id === sel ? '✓ ' : '') + d.name;
+            const icon = i < TRACK_ICONS.length ? TRACK_ICONS[i] : '';
+            this._trackBtnLabels[i].string = (d.id === sel ? '✓ ' : '') + (icon ? icon + ' ' : '') + d.name;
         }
         if (this._trackDescLabel) {
             let def = TRACK_DEFS[0];
@@ -532,14 +537,29 @@ export class KartUI extends Component {
         menu.setPosition(0, 0, 0);
         this._menuPanel = menu;
         menu.active = false;
+        // scrim: dim the live 3D world behind the menu so road dashes and
+        // the player's kart don't strike through the menu text. First child
+        // of the menu panel, so it renders behind every label/button; it has
+        // no touch handler, so taps still reach the buttons.
+        const scrim = new Node('menuScrim');
+        scrim.layer = Layers.Enum.UI_2D;
+        scrim.setParent(menu);
+        scrim.setPosition(0, 0, 0);
+        const st = scrim.addComponent(UITransform);
+        st.setContentSize(720, 1280);
+        const sg = scrim.addComponent(Graphics);
+        sg.fillColor = new Color(10, 15, 25, 110);
+        sg.rect(-360, -640, 720, 1280);
+        sg.fill();
         this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
         // track select: two circuits, each playable fwd + reverse.
         // Icons are decorative; the ✓ prefix marks the selected one.
-        const trackIcons = ['🌊', '🌵'];
+        // (TRACK_ICONS is module-level: _refreshTrackUI re-applies the same
+        // icon when the selection changes, or the emoji vanishes.)
         for (let i = 0; i < TRACK_DEFS.length; i++) {
             const d = TRACK_DEFS[i];
-            const icon = i < trackIcons.length ? trackIcons[i] : '';
+            const icon = i < TRACK_ICONS.length ? TRACK_ICONS[i] : '';
             const x = i === 0 ? -125 : 125;
             const btn = this._makeButton(menu, 'trackBtn' + d.id, x, 150, 230, 90,
                 icon + ' ' + d.name, 30, new Color(40, 90, 60, 255),
