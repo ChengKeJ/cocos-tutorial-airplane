@@ -512,6 +512,23 @@ export class KartGame extends Component {
         fillLight.illuminance = 80000;
         fillLight.color = new Color(255, 238, 220, 255);
 
+        // fix135: one side fill per side (yaw ±90, 15000 lux, warm
+        // white). The ±X faces get no direct light from the yaw-0
+        // fill, so kart 2's side flank reads olive-green and karts
+        // 3/7 show no gloss hotspot on their side faces (drive130
+        // sixth re-run). 15000 lux is a gentle lift (~19% of the
+        // fill), not a washout — the road/kart brightness was verified
+        // not to blow out (playtest to confirm on the real build).
+        for (const sideYaw of [90, -90]) {
+            const sideFill = new Node(sideYaw > 0 ? 'fillR' : 'fillL');
+            sideFill.layer = Layers.Enum.DEFAULT;
+            sideFill.setParent(this.node);
+            sideFill.setRotationFromEuler(-50, sideYaw, 0);
+            const sideLight = sideFill.addComponent(DirectionalLight);
+            sideLight.illuminance = 15000;
+            sideLight.color = new Color(255, 238, 220, 255);
+        }
+
         const kartsRoot = new Node('karts');
         kartsRoot.setParent(this.node);
         this._kartsRoot = kartsRoot;
