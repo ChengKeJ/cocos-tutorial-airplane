@@ -446,6 +446,31 @@ export class KartUI extends Component {
         return label;
     }
 
+    /** Near-opaque rounded backing panel for a menu text block. Alpha
+     * nudges (110, then 170) both failed to hide the bright yellow centre
+     * dashes behind the desc/best labels, so the text now sits on a
+     * solid panel instead: no backdrop pixel can show through it.
+     * Created right after the scrim, so it renders below every label
+     * and button; buttons are solid anyway. */
+    private _makeBackingPanel(parent: Node, name: string, x: number, y: number,
+        w: number, h: number, r: number): Node {
+        const node = new Node(name);
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        node.setPosition(x, y, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(w, h);
+        const g = node.addComponent(Graphics);
+        g.fillColor = new Color(10, 15, 25, 235);
+        g.roundRect(-w / 2, -h / 2, w, h, r);
+        g.fill();
+        g.strokeColor = new Color(255, 255, 255, 80);
+        g.lineWidth = 2;
+        g.roundRect(-w / 2, -h / 2, w, h, r);
+        g.stroke();
+        return node;
+    }
+
     private _makeButton(parent: Node, name: string, x: number, y: number, w: number, h: number,
         text: string, fontSize: number, bg: Color, onTap: () => void): Node {
         const node = new Node(name);
@@ -592,6 +617,14 @@ export class KartUI extends Component {
         this._menuScrimNode = scrim;
         this._menuScrim = scrim.addComponent(Graphics);
         this._redrawScrim();
+        // solid backing panels behind the bare text labels (desc + best,
+        // and the hint line at the bottom): the full-screen scrim alone
+        // could not hide the yellow centre dashes behind them. Panel
+        // spans y 2..112 around desc (y 85) + best (y 30); hint panel
+        // spans y -396..-344 around the hint (y -370). Buttons are solid
+        // already, so they need no panel.
+        this._makeBackingPanel(menu, 'descBestPanel', 0, 57, 680, 110, 18);
+        this._makeBackingPanel(menu, 'hintPanel', 0, -370, 680, 52, 14);
         this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
         // track select: two circuits, each playable fwd + reverse.
