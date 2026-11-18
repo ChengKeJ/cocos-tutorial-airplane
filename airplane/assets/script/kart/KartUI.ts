@@ -38,7 +38,7 @@ const SKY = new Color(30, 120, 220, 255);
 const ORANGE = new Color(255, 122, 26, 255);
 const MINT = new Color(60, 220, 130, 255);
 const PINK = new Color(235, 80, 180, 255);
-const SHADOW = new Color(0, 0, 0, 170);
+const SHADOW = new Color(0, 0, 0, 150);
 const DIM_BG = new Color(52, 58, 72, 255);
 
 /** Restyleable button face (size + base colour), for selected states. */
@@ -86,6 +86,7 @@ export class KartUI extends Component {
     private _toastTime = 0;
     // Pass E: countdown lights, big banner, results confetti + pop-in
     private _countLights: Label[] = [];
+    private _countGantry: Node = null; // start-light gantry bar + posts behind the dots
     private _bannerLabel: Label = null;
     private _bannerTime = 0;
     private _bannerPill: Node = null;
@@ -200,7 +201,7 @@ export class KartUI extends Component {
             this._countPopT -= dt;
             const t = Math.max(0, this._countPopT / 0.18);
             const s = 1 + 0.3 * t;
-            this._countdownLabel.node.setScale(s, s, 1);
+            this._setDisplayScale(this._countdownLabel, s);
         }
         // drift button ring: gold halo while the drift touch is held
         if (this._driftRing) { this._driftRing.active = this._driftId >= 0; }
@@ -449,10 +450,12 @@ export class KartUI extends Component {
         // numeral pop: big beat numbers punch in at 1.3x and settle
         if (text.length > 0) {
             this._countPopT = 0.18;
-            this._countdownLabel.node.setScale(1.3, 1.3, 1);
+            this._setDisplayScale(this._countdownLabel, 1.3);
         } else {
-            this._countdownLabel.node.setScale(1, 1, 1);
+            this._setDisplayScale(this._countdownLabel, 1);
         }
+        // gantry: the start-light bar + posts show with the lights
+        if (this._countGantry) { this._countGantry.active = text.length > 0; }
         // lights: 3/2/1 fill red one by one, GO turns all green, '' hides
         const lit = text === '3' ? 1 : text === '2' ? 2 : text === '1' ? 3 : text === 'GO!' ? 3 : 0;
         const col = text === 'GO!' ? MINT : new Color(230, 50, 50, 255);
@@ -641,10 +644,12 @@ export class KartUI extends Component {
     // ---- builders ----
 
     /** Display text with a chunky drop shadow: the shadow is a dark copy
-     * offset (-4,-5) created first (renders behind), named <name>_sh.
-     * _setDisplayText keeps the shadow's string in sync. */
+     * straight below (offset (0,-7), fix131 — the old diagonal (-4,-5)
+     * offset read as a doubled numeral) created first (renders behind),
+     * named <name>_sh. _setDisplayText keeps the shadow's string in sync,
+     * _setDisplayScale keeps it in sync through pop animations. */
     private _makeDisplayLabel(parent: Node, name: string, x: number, y: number, fontSize: number, color: Color, text: string): Label {
-        this._makeLabel(parent, name + '_sh', x - 4, y - 5, fontSize, SHADOW, text);
+        this._makeLabel(parent, name + '_sh', x, y - 7, fontSize, SHADOW, text);
         const main = this._makeLabel(parent, name, x, y, fontSize, color, text);
         (main as any).isBold = true;
         return main;
@@ -667,6 +672,17 @@ export class KartUI extends Component {
         const p = label.node.parent;
         const sh = p ? p.getChildByName(label.node.name + '_sh') : null;
         if (sh) { sh.active = active; }
+    }
+
+    /** Scale a display label and its shadow twin together, so a pop
+     * animation never leaves the shadow behind (the old pop scaled only
+     * the main label, so the twin diverged mid-pop and the numeral read
+     * doubled). */
+    private _setDisplayScale(label: Label, s: number): void {
+        label.node.setScale(s, s, 1);
+        const p = label.node.parent;
+        const sh = p ? p.getChildByName(label.node.name + '_sh') : null;
+        if (sh) { sh.setScale(s, s, 1); }
     }
 
     /** Solid rounded bar (title underlines, accent strips). */
@@ -839,6 +855,17 @@ export class KartUI extends Component {
         // 1.3x — see showCountdown / update)
         this._countdownLabel = this._makeDisplayLabel(this._canvas, 'countdownLabel', 0, 150, 110, GOLD, '');
         this._setDisplayActive(this._countdownLabel, false);
+        // countdown gantry (fix131): the light dots used to float in
+        // mid-air as bare red/grey balls — a navy bar with a gold top
+        // strip + two posts now holds them, created BEFORE the dots so
+        // it renders underneath. Toggled with the lights in showCountdown.
+        this._countGantry = new Node('countGantry');
+        this._countGantry.layer = Layers.Enum.UI_2D;
+        this._countGantry.setParent(this._canvas);
+        this._countGantry.active = false;
+        this._makeBackingPanel(this._countGantry, 'gantryBar', 0, 330, 460, 120, 24, true, 215);
+        this._makeBar(this._countGantry, 'gantryPostL', -210, 245, 16, 90, NAVY);
+        this._makeBar(this._countGantry, 'gantryPostR', 210, 245, 16, 90, NAVY);
         // countdown lights: 3 dots above the numeral, fill red per beat, green on GO
         for (let i = 0; i < 3; i++) {
             const dot = this._makeLabel(this._canvas, 'countLight' + i, (i - 1) * 130, 330, 96, GREY, '●');
@@ -1130,19 +1157,22 @@ export class KartUI extends Component {
             new Color(244, 162, 97, 255), new Color(67, 97, 238, 255),
             new Color(255, 210, 63, 255), MINT, PINK,
         ];
-        for (let i = 0; i < 120; i++) {
+        for (let i = 0; i < 150; i++) {
             this._confettiParts.push({
                 x: (Math.random() - 0.5) * 700,
                 y: 300 + Math.random() * 340,
                 vx: (Math.random() - 0.5) * 60,
                 vy: -(120 + Math.random() * 180),
                 c: cols[i % cols.length],
-                s: 8 + Math.random() * 10,
+                s: 12 + Math.random() * 12,
                 ph: Math.random() * Math.PI * 2,
                 round: i % 3 === 0,
             });
         }
-        this._confettiT = 3.5;
+        // fix131: 8 s of continuous rain (was 3.5 s, which expired before
+        // the slow headless harness screenshotted the results) — parts
+        // respawn at the top while it rains, so the screen is never empty.
+        this._confettiT = 8;
     }
 
     private _updateConfetti(dt: number): void {
@@ -1159,6 +1189,12 @@ export class KartUI extends Component {
             p.x += (p.vx + Math.sin(this._confettiT * 3 + p.ph) * 25) * dt;
             p.y += p.vy * dt;
             p.vy -= 60 * dt; // gravity: falls faster over time
+            // respawn at the top while it rains — continuous confetti
+            if (p.y < -680) {
+                p.y = 620 + Math.random() * 80;
+                p.x = (Math.random() - 0.5) * 700;
+                p.vy = -(120 + Math.random() * 180);
+            }
             g.fillColor = p.c;
             if (p.round) {
                 g.circle(p.x, p.y, p.s / 2);
