@@ -219,7 +219,10 @@ export class KartGame extends Component {
     /** Owned paints for a kart ([default, alt1, alt2]); default always owned. */
     public paintsOwned(kartIdx: number): boolean[] {
         if (kartIdx < 0 || kartIdx >= ROSTER.length) { return [true, false, false]; }
-        return this._ownedPaints[kartIdx].slice();
+        // drive130: start() used to abort before progression loaded,
+        // leaving _ownedPaints empty — never throw from here.
+        const row = this._ownedPaints[kartIdx];
+        return row ? row.slice() : [true, false, false];
     }
 
     /** Selected paint index (0..2) for a kart. */
@@ -233,6 +236,7 @@ export class KartGame extends Component {
      * races never call it mid-race. */
     public tapPaint(kartIdx: number, paintIdx: number): 'selected' | 'bought' | 'poor' | 'invalid' {
         if (kartIdx < 0 || kartIdx >= ROSTER.length || paintIdx < 0 || paintIdx >= PAINTS[kartIdx].length) { return 'invalid'; }
+        if (!this._ownedPaints[kartIdx]) { return 'invalid'; } // progression not loaded yet
         const res = paintTapResult(this._coins, PAINTS[kartIdx][paintIdx].price, this._ownedPaints[kartIdx][paintIdx]);
         if (res === 'poor') { return 'poor'; }
         if (res === 'bought') {
@@ -380,7 +384,13 @@ export class KartGame extends Component {
         this._track.reversed = this._reverse;
         const trackRoot = new Node('trackRoot');
         trackRoot.setParent(this.node);
-        this._track.buildWorld(trackRoot);
+        // drive130: a track-build failure must never abort the whole
+        // game — the karts / menu / UI still load on a degraded track.
+        try {
+            this._track.buildWorld(trackRoot);
+        } catch (e) {
+            console.error('[Star Kart] buildWorld failed, continuing on degraded track: ' + e);
+        }
         this._trackRoot = trackRoot;
         if (this._items) { this._items.setTrack(this._track); }
         this._resetGrid();
@@ -410,6 +420,15 @@ export class KartGame extends Component {
         const saved = sys.localStorage.getItem(this._bestKey(this._reverse));
         this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
 
+        // Phase 2 step 3: progression state FIRST (drive130) — start()
+        // used to abort inside _rebuildTrack before this ran, leaving
+        // _ownedPaints empty and the menu throwing on paintsOwned().
+        this._coins = this._loadInt(COINS_KEY);
+        this._races = this._loadInt(RACES_KEY);
+        this._wins = this._loadInt(WINS_KEY);
+        this._ownedPaints = parseOwnedPaints(sys.localStorage.getItem(PAINTS_KEY));
+        this._selectedPaints = parseSelectedPaints(sys.localStorage.getItem(SELECTED_PAINTS_KEY));
+
         // selected track world (karts / items are created after this)
         this._rebuildTrack();
 
@@ -432,13 +451,6 @@ export class KartGame extends Component {
         // grid order: the saved pick drives karts[0] (the player), the
         // other 7 follow in roster order — no AI duplicates the pick.
         this._kartIdx = this._loadKartIdx();
-        // Phase 2 step 3: progression state (before the karts are built,
-        // so the player's selected paint applies from the first frame).
-        this._coins = this._loadInt(COINS_KEY);
-        this._races = this._loadInt(RACES_KEY);
-        this._wins = this._loadInt(WINS_KEY);
-        this._ownedPaints = parseOwnedPaints(sys.localStorage.getItem(PAINTS_KEY));
-        this._selectedPaints = parseSelectedPaints(sys.localStorage.getItem(SELECTED_PAINTS_KEY));
         const order = rosterOrder(this._kartIdx);
         for (let i = 0; i < KartConstants.RACER_COUNT; i++) {
             const ks = this._makeKart(i, ROSTER[order[i]]);
@@ -548,6 +560,9 @@ export class KartGame extends Component {
             return;
         }
         if (this.state === 'racing') {
+            // drive130: if start() aborted before the karts were built,
+            // _player is null — never flood per-frame errors.
+            if (!this._player || this._karts.length === 0) { return; }
             this._raceTime += dt;
             this._updateRubberBand(dt);
             for (const k of this._karts) {
