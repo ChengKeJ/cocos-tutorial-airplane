@@ -140,6 +140,21 @@ export class KartItems {
         }
     }
 
+    /**
+     * Re-point at a new track and rebuild the item boxes (track switch from
+     * the menu). Old box nodes are destroyed; shells / bananas are cleared.
+     */
+    public setTrack(track: KartTrack): void {
+        this._track = track;
+        for (const bx of this._boxes) { bx.node.destroy(); }
+        this._boxes = [];
+        for (const sh of this._shells) { sh.node.active = false; }
+        this._shells = [];
+        for (const bn of this._bananas) { bn.node.active = false; }
+        this._bananas = [];
+        this.buildBoxes();
+    }
+
     /** Clear all projectiles / bananas, restore all boxes. Call on race reset. */
     public reset(): void {
         for (const sh of this._shells) { sh.node.active = false; }
