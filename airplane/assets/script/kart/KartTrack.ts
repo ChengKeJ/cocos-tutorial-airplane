@@ -685,6 +685,28 @@ export class KartTrack {
         return out;
     }
 
+    /** How far the road reaches from `cc` in direction `ang` (radians).
+     *  Max radius over centreline stations whose direction is within
+     *  `halfWin` of `ang`. The loop is not circular, so a fixed-radius
+     *  scenery ring can land ON the road — mesas are seated from this
+     *  instead (see the mesa ring in _buildScenery). */
+    private _roadExtentAt(cc: Vec3, ang: number, halfWin: number): number {
+        const cl = this._cl;
+        let ext = 0;
+        for (let i = 0; i < cl.count; i += 4) {
+            const dx = cl.px[i] - cc.x, dz = cl.pz[i] - cc.z;
+            const a = Math.atan2(dz, dx);
+            let d = a - ang;
+            while (d > Math.PI) { d -= Math.PI * 2; }
+            while (d < -Math.PI) { d += Math.PI * 2; }
+            if (Math.abs(d) <= halfWin) {
+                const r = Math.hypot(dx, dz);
+                if (r > ext) { ext = r; }
+            }
+        }
+        return ext;
+    }
+
     // -----------------------------------------------------------------------
     // World meshes (all procedural, all unlit flat colours)
     // -----------------------------------------------------------------------
@@ -908,15 +930,33 @@ export class KartTrack {
 
         // distant mountains / mesas: a ring of big low-poly shapes around
         // the circuit so the horizon is never flat blue.
+        // Both rings hug the track: the loop is not circular, so a
+        // fixed-radius ring can land ON the road — the canyon's 10-mesa
+        // ring did that (mesas sat on the road, worst −54 m) AND left sky
+        // gaps between neighbours, a cloud + blue sky showing through as
+        // a "waterfall" column (drive119 shots 225/227); the sunset ring
+        // had the same flaw, one cone overlapping the road by ~35 m at
+        // road height (found by the node clearance check, fix3). Each
+        // shape is seated just outside the road in its own direction and
+        // wide enough to overlap its neighbours (mesas), so the horizon
+        // reads as continuous rock/forest and no shape ever touches the
+        // road. Layout, checkpoints, pads and zones are untouched.
+        const isMesa = this.def.mountainKind === 'mesa';
+        const ringN = isMesa ? 14 : 10;
         const cc = this.centroid(new Vec3());
-        for (let i = 0; i < 10; i++) {
-            const ang = (i / 10) * Math.PI * 2 + rnd() * 0.3;
-            const r = 380 + rnd() * 140;
+        for (let i = 0; i < ringN; i++) {
+            const ang = (i / ringN) * Math.PI * 2 + rnd() * 0.3;
             const h = 70 + rnd() * 80;
-            const base = 90 + rnd() * 70;
+            const base = (90 + rnd() * 70) * (isMesa ? 1.35 : 1);
             const col = i % 2 === 0 ? this.def.mountain[0] : this.def.mountain[1];
+            // seat just outside the road in this direction: road extent
+            // over a ±0.7 rad window + shape radius + 40 m margin (a mesa
+            // disc spans ~±0.5 rad as seen from the centroid, so the
+            // window covers it; cones are seated the same way, which also
+            // clears them at ground level where they are widest).
+            const r = this._roadExtentAt(cc, ang, 0.7) + base + 40;
             const mx = cc.x + Math.cos(ang) * r, mz = cc.z + Math.sin(ang) * r;
-            if (this.def.mountainKind === 'mesa') {
+            if (isMesa) {
                 // flat-topped mesa: wide cylinder + a smaller cap rock
                 b.addCylinder(col, new Vec3(mx, h / 2 - 0.5, mz), 0, base * 0.95, base, h);
                 b.addCylinder(col, new Vec3(mx, h - 0.5 + 8, mz), 0, base * 0.55, base * 0.6, 16);
