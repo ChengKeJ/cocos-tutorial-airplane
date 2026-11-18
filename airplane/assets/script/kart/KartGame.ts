@@ -14,7 +14,7 @@
  * KartUI (on the Canvas) drives input + HUD and sets game.ui = itself.
  */
 
-import { _decorator, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
+import { _decorator, AudioClip, AudioSource, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
 import { ItemKind, KartConstants, ROSTER } from './KartConstants';
 import { KartTrack, MeshBuilder, TrackFrame } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
@@ -92,6 +92,26 @@ export class KartGame extends Component {
     public driftHeld = false;
     public brakeHeld = false;
 
+    // ---- Pass D: audio clips, wired in kart.scene (uuids in res/audio) ----
+    // bgm/use/spin reuse the plane's tutorial clips; engine/beep/go/pickup/
+    // screech are kart-*.wav synthesised for this game (see res/audio/sound).
+    @property({ type: AudioClip })
+    public bgmClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public engineClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public beepClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public goClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public pickupClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public useClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public spinClip: AudioClip = null;
+    @property({ type: AudioClip })
+    public screechClip: AudioClip = null;
+
     public state = 'menu'; // menu | countdown | racing | paused | finished
 
     private _reverse = false;
@@ -128,6 +148,11 @@ export class KartGame extends Component {
     private _smokePos = new Vec3();
     private _shakeAmp = 0;
     private _lastCollideShake = -10;
+    // ---- Pass D audio ----
+    private _bgmSrc: AudioSource = null;
+    private _engineSrc: AudioSource = null;
+    private _sfxSrc: AudioSource = null;
+    private _audioStarted = false;
 
     // ---- public state for the UI ----
     public get raceTime(): number { return this._raceTime; }
@@ -238,6 +263,22 @@ export class KartGame extends Component {
         this._items = new KartItems(this._track, this.node);
         this._items.buildBoxes();
 
+        // Pass D: audio — three runtime sources (BGM loop, engine loop,
+        // one-shots). Clips come from the @property fields wired in the scene.
+        this._bgmSrc = this.node.addComponent(AudioSource);
+        (this._bgmSrc as any).clip = this.bgmClip;
+        (this._bgmSrc as any).loop = true;
+        (this._bgmSrc as any).volume = 0.3;
+        this._engineSrc = this.node.addComponent(AudioSource);
+        (this._engineSrc as any).clip = this.engineClip;
+        (this._engineSrc as any).loop = true;
+        (this._engineSrc as any).volume = 0;
+        this._sfxSrc = this.node.addComponent(AudioSource);
+        // item sound hooks (player only — 7 AI karts stay silent)
+        this._items.onPickup = (k) => { if (k.isPlayer) { this._playSfx(this.pickupClip); } };
+        this._items.onUse = (k) => { if (k.isPlayer) { this._playSfx(this.useClip); } };
+        this._items.onSpinOut = (k) => { if (k.isPlayer) { this._playSfx(this.spinClip); } };
+
         const camNode = find('Main Camera');
         if (camNode) {
             this._camera = camNode;
@@ -250,6 +291,7 @@ export class KartGame extends Component {
 
     update(dt: number) {
         if (dt > 0.05) { dt = 0.05; }
+        this._updateEngineAudio();
         if (this.state === 'countdown') {
             this._countdownT -= dt;
             const elapsed = (KartConstants.COUNTDOWN_LEAD + 3 * KartConstants.COUNTDOWN_BEAT) - this._countdownT;
@@ -261,6 +303,8 @@ export class KartGame extends Component {
             }
             if (label !== this._countdownShown) {
                 this._countdownShown = label;
+                if (label === '3' || label === '2' || label === '1') { this._playSfx(this.beepClip); }
+                else if (label === 'GO!') { this._playSfx(this.goClip); }
                 if (this.ui) { this.ui.showCountdown(label); }
             }
             if (this._countdownT <= 0) {
@@ -323,6 +367,7 @@ export class KartGame extends Component {
         this._resultsShown = false;
         this._resultsT = 0;
         this.state = 'countdown';
+        this._startRaceAudio();
         if (this.ui) { this.ui.showMenu(false); this.ui.showResults(null); this.ui.showHud(false); this.ui.showPause(false); }
     }
 
@@ -512,11 +557,11 @@ export class KartGame extends Component {
             k.driftTime += dt;
             if (k.driftTime > KartConstants.DRIFT_MAX_HOLD) {
                 const tier = this._releaseDrift(k);
-                if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); }
+                if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); this._playSfx(this.screechClip); }
             }
         } else if (k.driftTime > 0) {
             const tier = this._releaseDrift(k);
-            if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); }
+            if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); this._playSfx(this.screechClip); }
         }
 
         // speed
@@ -734,6 +779,34 @@ export class KartGame extends Component {
     /** Camera shake: amp in metres, decays in _updateCamera. */
     public addShake(amp: number): void {
         if (amp > this._shakeAmp) { this._shakeAmp = amp; }
+    }
+
+    // ---- Pass D audio ----
+
+    private _playSfx(clip: AudioClip | null): void {
+        if (!clip || !this._sfxSrc) { return; }
+        (this._sfxSrc as any).playOneShot(clip, 0.9);
+    }
+
+    /** Start BGM + engine loops on the first race (kept running after). */
+    private _startRaceAudio(): void {
+        if (this._audioStarted) { return; }
+        this._audioStarted = true;
+        if (this._bgmSrc && this.bgmClip) { this._bgmSrc.play(); }
+        if (this._engineSrc && this.engineClip) { this._engineSrc.play(); }
+    }
+
+    /** Engine pitch + volume follow player speed; quiet idle in menu/pause. */
+    private _updateEngineAudio(): void {
+        if (!this._engineSrc || !this._audioStarted) { return; }
+        const spd = this._player ? this._player.speed : 0;
+        const ratio = Math.min(1, Math.max(0, spd / KartConstants.BASE_TOP_SPEED));
+        (this._engineSrc as any).pitch = 0.7 + ratio * 0.9;
+        let vol = 0.08; // menu / finished idle
+        if (this.state === 'racing') { vol = 0.22 + ratio * 0.28; }
+        else if (this.state === 'countdown') { vol = 0.15; }
+        else if (this.state === 'paused') { vol = 0.03; }
+        (this._engineSrc as any).volume = vol;
     }
 
     private _spawnSmoke(x: number, y: number, z: number): void {
