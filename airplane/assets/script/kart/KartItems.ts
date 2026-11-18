@@ -1,5 +1,5 @@
 /**
- * Items + AI item use for the kart game （飞车狂飙 v1.0.8, milestone 2).
+ * Items + AI item use for the kart game （飞车狂飙 v1.0.9, milestone 2).
  *
  * The 6 kinds from the design spec (MIT-licensed Three.js reference — numbers
  * ported, code rewritten for the arcade spline model):
