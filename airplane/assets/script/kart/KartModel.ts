@@ -27,8 +27,9 @@
  * cheap soft blob — no transparency, so it works on every backend.
  */
 
-import { Color, Layers, Material, ModelComponent, Node, Vec3, primitives, utils } from 'cc';
+import { Layers, Material, ModelComponent, Node, Vec3, primitives, utils } from 'cc';
 import { MeshBuilder } from './KartTrack';
+import { stdMaterial } from './KartMaterials';
 import { DriverStats, PaintScheme, ROSTER } from './KartConstants';
 import { KART_MODELS, KartModelBucket } from './KartModelsData';
 
@@ -67,24 +68,13 @@ function b64ToBytes(s: string): Uint8Array {
     return out.subarray(0, o);
 }
 
-// ---- PBR materials (builtin-standard), cached by colour + finish ----
-const _stdMats = new Map<string, Material>();
-
+// PBR materials come from KartMaterials.stdMaterial (shared cache):
+// real builtin-standard via the runtime-loaded anchor effect, or the
+// builtin-unlit fallback — never a null-effect material (see
+// KartMaterials.ts for why the old initialize({ effectName:
+// 'builtin-standard' }) path bricked the game in drive130).
 function standardMaterial(hex: number, metallic: number, roughness: number): Material {
-    const key = hex.toString(16) + '_' + metallic + '_' + roughness;
-    let mat = _stdMats.get(key);
-    if (!mat) {
-        mat = new Material();
-        mat.initialize({ effectName: 'builtin-standard' });
-        const r = (hex >> 16) & 0xff;
-        const g = (hex >> 8) & 0xff;
-        const b = hex & 0xff;
-        mat.setProperty('mainColor', new Color(r, g, b, 255));
-        mat.setProperty('metallic', metallic);
-        mat.setProperty('roughness', roughness);
-        _stdMats.set(key, mat);
-    }
-    return mat;
+    return stdMaterial(hex, metallic, roughness, 0);
 }
 
 /** Finish per bucket role. Paint is glossy metallic (clear-coat feel);
