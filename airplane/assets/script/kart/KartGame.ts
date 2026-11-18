@@ -16,7 +16,7 @@
 
 import { _decorator, AudioClip, AudioSource, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
 import { ItemKind, KartConstants, ROSTER } from './KartConstants';
-import { KartTrack, MeshBuilder, TrackFrame } from './KartTrack';
+import { KartTrack, MeshBuilder, TrackFrame, trackDefById } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
 import { KartItems } from './KartItems';
 import { aiSkillOf, computeRubberBand, hash01 } from './KartItemsLogic';
@@ -25,6 +25,7 @@ const { ccclass, property } = _decorator;
 const BEST_TIME_KEY = 'kart_best_time'; // 正赛 best (existing key, kept)
 const BEST_TIME_KEY_REV = 'kart_best_time_rev'; // 逆向 best
 const MODE_KEY = 'kart_mode'; // 'fwd' | 'rev', last chosen race direction
+const TRACK_KEY = 'kart_track'; // selected track id ('sunset' | 'canyon')
 const KART_VERSION = 'v1.0.9';
 const RAD2DEG = 180 / Math.PI;
 
@@ -119,6 +120,8 @@ export class KartGame extends Component {
     public get reverseMode(): boolean { return this._reverse; }
 
     private _track: KartTrack = null;
+    private _trackId = 'sunset';
+    private _trackRoot: Node = null;
     private _karts: KartState[] = [];
     private _player: KartState = null;
     private _items: KartItems = null;
@@ -167,35 +170,72 @@ export class KartGame extends Component {
     public get bestTimeMs(): number { return this._bestTime; }
     /** Best times for both modes, for the menu (0 = none). */
     public bestTimes(): { fwd: number; rev: number } {
-        const f = sys.localStorage.getItem(BEST_TIME_KEY);
-        const r = sys.localStorage.getItem(BEST_TIME_KEY_REV);
+        const f = sys.localStorage.getItem(this._bestKey(false));
+        const r = sys.localStorage.getItem(this._bestKey(true));
         return { fwd: f ? parseInt(f, 10) || 0 : 0, rev: r ? parseInt(r, 10) || 0 : 0 };
+    }
+
+    /**
+     * Best-time key for the current track + direction. Track 1 keeps the
+     * legacy keys (kart_best_time / _rev) so existing records survive;
+     * later tracks get kart_best_time_<id> / _rev.
+     */
+    private _bestKey(reverse: boolean): string {
+        if (this._trackId === 'sunset') { return reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY; }
+        return 'kart_best_time_' + this._trackId + (reverse ? '_rev' : '');
+    }
+
+    /** Switch tracks from the menu: rebuild the world, re-place the karts. */
+    public selectTrack(id: string): void {
+        const def = trackDefById(id);
+        if (def.id === this._trackId && this._track) { return; }
+        this._trackId = def.id;
+        sys.localStorage.setItem(TRACK_KEY, def.id);
+        this._rebuildTrack();
+        const saved = sys.localStorage.getItem(this._bestKey(this._reverse));
+        this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
+    }
+
+    /** Destroy the old track world and build the selected one. */
+    private _rebuildTrack(): void {
+        if (this._trackRoot) { this._trackRoot.destroy(); this._trackRoot = null; }
+        const def = trackDefById(this._trackId);
+        this._track = new KartTrack(def);
+        this._track.reversed = this._reverse;
+        const trackRoot = new Node('trackRoot');
+        trackRoot.setParent(this.node);
+        this._track.buildWorld(trackRoot);
+        this._trackRoot = trackRoot;
+        if (this._items) { this._items.setTrack(this._track); }
+        this._resetGrid();
+        this._snapCameraToPlayer();
     }
     /** Switch race direction (from the menu) and start in that mode. */
     public startRaceInMode(reverse: boolean) {
         this._reverse = reverse;
         sys.localStorage.setItem(MODE_KEY, reverse ? 'rev' : 'fwd');
         if (this._track) { this._track.reversed = reverse; }
-        const saved = sys.localStorage.getItem(reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY);
+        const saved = sys.localStorage.getItem(this._bestKey(reverse));
         this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
         this.startRace();
     }
     public get karts(): KartState[] { return this._karts; }
     public get track(): KartTrack { return this._track; }
+    /** Selected track id ('sunset' | 'canyon'). */
+    public get trackId(): string { return this._trackId; }
 
     start() {
         // race direction: last chosen mode (default 正赛）; the track maps
         // race coordinates to the centreline, so the grid / AI / items all
         // follow the mode without further branches.
         this._reverse = sys.localStorage.getItem(MODE_KEY) === 'rev';
-        const saved = sys.localStorage.getItem(this._reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY);
+        this._trackId = sys.localStorage.getItem(TRACK_KEY) || 'sunset';
+        if (trackDefById(this._trackId).id !== this._trackId) { this._trackId = 'sunset'; }
+        const saved = sys.localStorage.getItem(this._bestKey(this._reverse));
         this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
 
-        this._track = new KartTrack();
-        this._track.reversed = this._reverse;
-        const trackRoot = new Node('trackRoot');
-        trackRoot.setParent(this.node);
-        this._track.buildWorld(trackRoot);
+        // selected track world (karts / items are created after this)
+        this._rebuildTrack();
 
         const kartsRoot = new Node('karts');
         kartsRoot.setParent(this.node);
@@ -691,7 +731,7 @@ export class KartGame extends Component {
                     const ms = Math.round(this._raceTime * 1000);
                     if (this._bestTime === 0 || ms < this._bestTime) {
                         this._bestTime = ms;
-                        sys.localStorage.setItem(this._reverse ? BEST_TIME_KEY_REV : BEST_TIME_KEY, String(ms));
+                        sys.localStorage.setItem(this._bestKey(this._reverse), String(ms));
                     }
                     if (this.ui) { this.ui.showToast('🏁 完赛！'); }
                 }
