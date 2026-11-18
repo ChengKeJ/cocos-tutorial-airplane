@@ -335,25 +335,31 @@ export class KartGame extends Component {
     private _makeKart(i: number, stats: typeof ROSTER[0]): KartState {
         const model = buildKartModel(stats, i === 0 ? this._paintFor(this._kartIdx) : null);
         model.root.setParent(this._kartsRoot);
-        // boost flame: 6 flat discs (short cylinders, axis along Z) in a
-        // red -> white gradient, radii shrinking 0.30 -> 0.07 and spaced
-        // 0.12 m apart along the kart's length. fix132: the old 6 nested
-        // CONES all faced the chase cam base-on, so the outer cone hid
-        // the 5 inner layers and the flame read as one big solid orange
-        // ball. Discs read as concentric flame rings from behind (the
-        // chase view) and as a short tapered tongue from the side; the
-        // flicker in _updateVisuals still stretches/scales the node.
+        // boost flame: 7 flat discs (short cylinders, axis along Z) in a
+        // red -> white gradient, radii shrinking 0.19 -> 0.035 and spaced
+        // 0.14 m apart along the kart's length — a long tapered tongue,
+        // not a ball. fix133: the fix132 6-disc version (radii 0.30 ->
+        // 0.07 over 0.60 m) still read as a round orange disc/balloon
+        // from the chase cam (49y-drift-sparks.png, 49y-race-boost.png):
+        // the discs were too wide and too short, so from behind they
+        // were one big concentric circle. These are ~40% narrower and
+        // 40% longer, and _updateVisuals flattens them vertically
+        // (scale y 0.62x), so from behind they read as a flat flame
+        // tongue with layered rings, and from the side as a tapered
+        // tongue pointing backward. The flicker still stretches/scales
+        // the node.
         const flame = new Node('flame');
         flame.layer = Layers.Enum.DEFAULT;
         flame.setParent(model.root);
         flame.setPosition(0, 0.34, -0.98);
         const fb = new MeshBuilder();
         const FLAME_DISCS: Array<[number, number, number]> = [
-            [0xff4d00, 0.30, 0], [0xff7a1a, 0.26, -0.12], [0xffa31a, 0.21, -0.24],
-            [0xffc21a, 0.16, -0.36], [0xffd23f, 0.11, -0.48], [0xfff6c9, 0.07, -0.60],
+            [0xff4d00, 0.19, 0], [0xff7a1a, 0.16, -0.14], [0xffa31a, 0.13, -0.28],
+            [0xffc21a, 0.10, -0.42], [0xffd23f, 0.075, -0.56], [0xffe97a, 0.05, -0.70],
+            [0xfff6c9, 0.035, -0.84],
         ];
         for (const [hex, r, z] of FLAME_DISCS) {
-            fb.addPrimitive(hex, primitives.cylinder(r, r, 0.10, { radialSegments: 12 }),
+            fb.addPrimitive(hex, primitives.cylinder(r, r, 0.06, { radialSegments: 12 }),
                 new Vec3(0, 0, z), 0, new Vec3(1, 1, 1), Math.PI / 2);
         }
         fb.build(flame);
@@ -464,16 +470,22 @@ export class KartGame extends Component {
         // for specular pops — created in code (safer than scene JSON).
         // The sun (yaw 180) lights the karts' FRONT; the chase cam sees
         // the rear, so without a fill the rear is in deep shadow and dark
-        // paints go black — the fill (yaw 0, cool, ~half strength) lights
+        // paints go black — the fill (yaw 0, ~half strength) lights
         // the chase-cam side, so the rear view reads glossy, not a black
         // silhouette. (The cc.d.ts stub has no HemisphereLight, so the
         // fill is a second directional, mirrored from the sun.)
+        // fix133: the fill MUST be warm white, not cool blue — the old
+        // cool fill (215,228,255) tinted yellow paint green, so kart 2
+        // 闪电's rear rendered olive-green even though the material was
+        // bright yellow [255,210,63] (probe-proven). Warm fill 2.0 +
+        // the paint emissive floor (KartModel.ts) keep the rear its own
+        // hue. Sun 2.4 -> 2.6 for the lighter road (item 5).
         const sun = new Node('sun');
         sun.layer = Layers.Enum.DEFAULT;
         sun.setParent(this.node);
         sun.setRotationFromEuler(-55, 180, 0);
         const sunLight = sun.addComponent(DirectionalLight);
-        sunLight.illuminance = 2.4;
+        sunLight.illuminance = 2.6;
         sunLight.color = new Color(255, 244, 214, 255);
 
         const fill = new Node('fill');
@@ -481,8 +493,8 @@ export class KartGame extends Component {
         fill.setParent(this.node);
         fill.setRotationFromEuler(-50, 0, 0);
         const fillLight = fill.addComponent(DirectionalLight);
-        fillLight.illuminance = 1.6;
-        fillLight.color = new Color(215, 228, 255, 255);
+        fillLight.illuminance = 2.0;
+        fillLight.color = new Color(255, 238, 220, 255);
 
         const kartsRoot = new Node('karts');
         kartsRoot.setParent(this.node);
@@ -1100,7 +1112,10 @@ export class KartGame extends Component {
             if (boosting) {
                 const tier = k.boostMul >= 1.3 ? 1.25 : k.boostMul >= 1.2 ? 1.12 : 1;
                 const f = (0.85 + 0.35 * Math.sin(this._raceTime * 43 + k.sTotal * 0.1)) * tier;
-                k.flame.setScale(f, f, (0.8 + 0.6 * Math.random()) * tier);
+                // fix133: flatten vertically (y 0.62x) so the flame reads
+                // as a flat horizontal tongue from the chase cam, not a
+                // round ball — the discs face the camera base-on.
+                k.flame.setScale(f, f * 0.62, (0.8 + 0.6 * Math.random()) * tier);
             }
             // drift smoke: rear-wheel puffs while drifting (nearby karts only).
             // No new puffs once results are up — the panel is on screen and
