@@ -335,20 +335,24 @@ export class KartGame extends Component {
     private _makeKart(i: number, stats: typeof ROSTER[0]): KartState {
         const model = buildKartModel(stats, i === 0 ? this._paintFor(this._kartIdx) : null);
         model.root.setParent(this._kartsRoot);
-        // boost flame: 4-layer cone (deep orange -> amber -> yellow ->
-        // white-hot core), tip pointing backwards (-Z). Built once per
-        // kart, toggled while boostTime > 0; the flicker in
-        // _updateVisuals scales it up with the boost tier, so a tier-3
-        // mini-turbo / pad boost reads bigger than a tier-1.
+        // boost flame: 6-layer cone (deep red-orange -> orange -> amber
+        // -> gold -> pale yellow -> white-hot core), tip pointing
+        // backwards (-Z). Built once per kart, toggled while boostTime >
+        // 0; the flicker in _updateVisuals scales it up with the boost
+        // tier, so a tier-3 mini-turbo / pad boost reads bigger than a
+        // tier-1. Six thin layers + 12 segments keep the gradient smooth
+        // instead of flat orange polygons.
         const flame = new Node('flame');
         flame.layer = Layers.Enum.DEFAULT;
         flame.setParent(model.root);
         flame.setPosition(0, 0.55, -1.15);
         const fb = new MeshBuilder();
-        fb.addCone(0xff7a1a, new Vec3(0, 0, 0), 0, 0.44, 1.5, 10, -Math.PI / 2);
-        fb.addCone(0xffb020, new Vec3(0, 0, 0.12), 0, 0.32, 1.15, 10, -Math.PI / 2);
-        fb.addCone(0xffd23f, new Vec3(0, 0, 0.22), 0, 0.2, 0.8, 8, -Math.PI / 2);
-        fb.addCone(0xfff6c9, new Vec3(0, 0, 0.3), 0, 0.11, 0.5, 8, -Math.PI / 2);
+        fb.addCone(0xff4d00, new Vec3(0, 0, 0), 0, 0.44, 1.5, 12, -Math.PI / 2);
+        fb.addCone(0xff7a1a, new Vec3(0, 0, 0.08), 0, 0.38, 1.32, 12, -Math.PI / 2);
+        fb.addCone(0xffa31a, new Vec3(0, 0, 0.16), 0, 0.30, 1.12, 12, -Math.PI / 2);
+        fb.addCone(0xffc21a, new Vec3(0, 0, 0.24), 0, 0.22, 0.9, 12, -Math.PI / 2);
+        fb.addCone(0xffd23f, new Vec3(0, 0, 0.30), 0, 0.15, 0.66, 12, -Math.PI / 2);
+        fb.addCone(0xfff6c9, new Vec3(0, 0, 0.36), 0, 0.08, 0.42, 12, -Math.PI / 2);
         fb.build(flame);
         flame.active = false;
         const pos = new Vec3();
@@ -455,8 +459,12 @@ export class KartGame extends Component {
         // AAA rework: a real sun. kart.scene has no directional light
         // node at all, and the PBR kart paint needs a directional source
         // for specular pops — created in code (safer than scene JSON).
-        // It shines from behind-above, so the chase cam sees the karts'
-        // rear lit and the glossy paint catches the light.
+        // The sun (yaw 180) lights the karts' FRONT; the chase cam sees
+        // the rear, so without a fill the rear is in deep shadow and dark
+        // paints go black — the fill (yaw 0, cool, ~half strength) lights
+        // the chase-cam side, so the rear view reads glossy, not a black
+        // silhouette. (The cc.d.ts stub has no HemisphereLight, so the
+        // fill is a second directional, mirrored from the sun.)
         const sun = new Node('sun');
         sun.layer = Layers.Enum.DEFAULT;
         sun.setParent(this.node);
@@ -464,6 +472,14 @@ export class KartGame extends Component {
         const sunLight = sun.addComponent(DirectionalLight);
         sunLight.illuminance = 2.0;
         sunLight.color = new Color(255, 244, 214, 255);
+
+        const fill = new Node('fill');
+        fill.layer = Layers.Enum.DEFAULT;
+        fill.setParent(this.node);
+        fill.setRotationFromEuler(-50, 0, 0);
+        const fillLight = fill.addComponent(DirectionalLight);
+        fillLight.illuminance = 1.1;
+        fillLight.color = new Color(215, 228, 255, 255);
 
         const kartsRoot = new Node('karts');
         kartsRoot.setParent(this.node);
@@ -479,14 +495,15 @@ export class KartGame extends Component {
         }
 
         // drift-smoke pool: shared sphere mesh + one grey material, nodes
-        // reused so a race never allocates mid-frame.
+        // reused so a race never allocates mid-frame. Small + short-lived
+        // (fix131): the old 0.45->1.95 puffs were oversized white blobs.
         const smokePrim = primitives.sphere(0.5, { segments: 8 });
         const smokeMesh = utils.MeshUtils.createMesh({
             positions: smokePrim.positions, normals: smokePrim.normals,
             uvs: smokePrim.uvs, indices: smokePrim.indices,
             minPos: new Vec3(-0.5, -0.5, -0.5), maxPos: new Vec3(0.5, 0.5, 0.5),
         });
-        const smokeMat = MeshBuilder.unlitMaterial(0xcfd4d8);
+        const smokeMat = MeshBuilder.unlitMaterial(0xc3c9ce);
         for (let i = 0; i < SMOKE_POOL; i++) {
             const node = new Node('smoke');
             node.layer = Layers.Enum.DEFAULT;
@@ -495,21 +512,22 @@ export class KartGame extends Component {
             r.mesh = smokeMesh;
             r.setMaterial(smokeMat, 0);
             node.active = false;
-            this._smoke.push({ node, life: 0, maxLife: 0.7, vx: 0, vz: 0 });
+            this._smoke.push({ node, life: 0, maxLife: 0.55, vx: 0, vz: 0 });
         }
 
         this._items = new KartItems(this._track, this.node);
         this._items.buildBoxes();
 
         // Step 4: drift-spark pool — same pattern as the smoke pool, but
-        // small bright orange nodes that live fast and die fast.
+        // small bright gold nodes that live fast and die fast. Brighter
+        // and bigger than smoke (fix131) so sparks are unmistakable.
         const sparkPrim = primitives.sphere(0.5, { segments: 6 });
         const sparkMesh = utils.MeshUtils.createMesh({
             positions: sparkPrim.positions, normals: sparkPrim.normals,
             uvs: sparkPrim.uvs, indices: sparkPrim.indices,
             minPos: new Vec3(-0.5, -0.5, -0.5), maxPos: new Vec3(0.5, 0.5, 0.5),
         });
-        const sparkMat = MeshBuilder.unlitMaterial(0xffa31a);
+        const sparkMat = MeshBuilder.unlitMaterial(0xffc21a);
         for (let i = 0; i < SPARK_POOL; i++) {
             const node = new Node('spark');
             node.layer = Layers.Enum.DEFAULT;
@@ -518,7 +536,7 @@ export class KartGame extends Component {
             r.mesh = sparkMesh;
             r.setMaterial(sparkMat, 0);
             node.active = false;
-            this._sparks.push({ node, life: 0, maxLife: 0.35, vx: 0, vy: 0, vz: 0 });
+            this._sparks.push({ node, life: 0, maxLife: 0.4, vx: 0, vy: 0, vz: 0 });
         }
 
         // Pass D: audio — three runtime sources (BGM loop, engine loop,
@@ -1156,16 +1174,17 @@ export class KartGame extends Component {
         for (const s of this._sparks) { s.node.active = false; }
     }
 
-    /** AAA: bigger, longer-lived puffs that billow outward from the wheel. */
+    /** fix131: smaller, shorter-lived puffs (spawn 0.30, grow to ~1.2)
+     * that billow outward from the wheel. */
     private _spawnSmoke(x: number, y: number, z: number, vx: number = 0, vz: number = 0): void {
         for (const s of this._smoke) {
             if (s.node.active) { continue; }
             s.node.active = true;
             s.node.setPosition(x, y, z);
-            s.life = s.maxLife = 0.7 + Math.random() * 0.35;
+            s.life = s.maxLife = 0.55 + Math.random() * 0.25;
             s.vx = vx;
             s.vz = vz;
-            s.node.setScale(0.45, 0.45, 0.45);
+            s.node.setScale(0.30, 0.30, 0.30);
             return;
         }
     }
@@ -1176,7 +1195,7 @@ export class KartGame extends Component {
             s.life -= dt;
             if (s.life <= 0) { s.node.active = false; continue; }
             const t = 1 - s.life / s.maxLife; // 0..1 grown
-            const grow = 0.45 + t * 1.5;
+            const grow = 0.30 + t * 0.9;
             const end = s.life < 0.18 ? Math.max(0.05, s.life / 0.18) : 1;
             s.node.setScale(grow * end, grow * end, grow * end);
             const p = s.node.position;
@@ -1190,11 +1209,11 @@ export class KartGame extends Component {
             if (s.node.active) { continue; }
             s.node.active = true;
             s.node.setPosition(x, y, z);
-            s.life = s.maxLife = 0.3 + Math.random() * 0.2;
+            s.life = s.maxLife = 0.35 + Math.random() * 0.2;
             s.vx = vx;
             s.vy = 2.0 + Math.random() * 1.5;
             s.vz = vz;
-            s.node.setScale(0.26, 0.26, 0.26);
+            s.node.setScale(0.30, 0.30, 0.30);
             return;
         }
     }
@@ -1206,7 +1225,7 @@ export class KartGame extends Component {
             s.life -= dt;
             if (s.life <= 0) { s.node.active = false; continue; }
             const t = s.life / s.maxLife; // 1..0 shrinking
-            const sc = 0.26 * t;
+            const sc = 0.30 * t;
             s.node.setScale(sc, sc, sc);
             s.vy -= 6 * dt; // gravity: the burst arcs and falls
             const p = s.node.position;
