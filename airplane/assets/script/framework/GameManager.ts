@@ -68,7 +68,7 @@ const ELITE_TYPE_OFFSET = 10; // elite of base type N reports as type N+10
 // Build version, stamped to the console at startup (nothing on screen)
 // so a playtest report can be tied to a build at a glance. Bump on
 // every upload; the upload --uv version number must match.
-const GAME_VERSION = 'v1.0.8';
+const GAME_VERSION = 'v1.0.9';
 // The hall scene's name (director.loadScene takes the scene NAME, not UUID
 // — see UIHall.ts; the plane scene's name is 'airplane', the hall's 'hall').
 const HALL_SCENE_NAME = 'hall';
@@ -174,7 +174,7 @@ export class GameManager extends Component {
     private _livesLabel: Label = null;
     private _waveLabel: Label = null;
     private _bombLabel: Label = null;
-    // Hall buttons (v1.0.8): HUD corner button (in-game) + menu button
+    // Hall buttons (v1.0.9): HUD corner button (in-game) + menu button
     // (gameStart page). The plane scene previously had NO way back to
     // the hall — returnMain() only resets the plane to its own menu.
     private _hallHudBtn: Node | null = null;
