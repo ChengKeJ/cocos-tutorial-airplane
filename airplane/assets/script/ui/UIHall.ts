@@ -387,6 +387,9 @@ export class UIHall extends Component {
             titleNode.setPosition(58, 58, 0);
             const tl = titleNode.getComponent(Label);
             if (tl) {
+                // drive130: the scene's kart title was only "飞车" — set
+                // the full name here so it reads "飞车狂飙" in full.
+                tl.string = isPlane ? '星空战机' : '飞车狂飙';
                 tl.fontSize = 50;
                 tl.color = col(255, 255, 255, 255);
                 (tl as any).isBold = true;
@@ -433,39 +436,68 @@ export class UIHall extends Component {
         g.fill();
     }
 
-    /** Side-view chunky kart: body + seat + gold helmet + rear wing + two wheels. */
+    /** Side-view racing kart, same chunky vector style as the plane icon:
+     * white body + gold helmet/accents + light-blue speed streaks.
+     * Sleek nose (right), seat back, rear wing (left), driver with visor,
+     * gold racing stripe, two detailed wheels. */
     private _drawKartIcon (g: Graphics) {
         const W = col(255, 255, 255, 255);
         const DARK = col(32, 36, 58, 255);
-        this._roundRect(g, -55, -6, 110, 34, 12, W);
-        this._roundRect(g, -30, 18, 36, 22, 8, W);
-        this._roundRect(g, -62, 22, 26, 8, 3, W);
-        g.fillColor = col(255, 196, 0, 255);
-        g.circle(-8, 36, 12);
+        const GOLD = col(255, 196, 0, 255);
+        const SKY = col(127, 227, 255, 220);
+        // Speed streaks trailing behind the kart (left).
+        this._roundRect(g, -84, -16, 18, 4, 2, SKY);
+        this._roundRect(g, -78, -4, 14, 4, 2, SKY);
+        // Rear wing: gold top plane + white endplate (left = rear).
+        this._roundRect(g, -70, 36, 30, 8, 4, GOLD);
+        this._roundRect(g, -66, 6, 7, 34, 3, W);
+        // Seat back rising behind the driver.
+        this._roundRect(g, -48, 14, 24, 16, 6, W);
+        // Driver: light-blue shoulders + gold helmet + dark visor.
+        this._roundRect(g, -26, 12, 26, 12, 6, SKY);
+        g.fillColor = GOLD;
+        g.circle(-12, 30, 11);
         g.fill();
-        for (const wx of [-36, 38]) {
+        this._roundRect(g, -14, 28, 14, 6, 3, DARK);
+        // Sleek body tub + tapered nose (right).
+        this._roundRect(g, -52, -4, 96, 22, 10, W);
+        g.fillColor = W;
+        g.moveTo(44, -2);
+        g.lineTo(64, 3);
+        g.lineTo(44, 12);
+        g.close();
+        g.fill();
+        // Gold racing stripe along the body.
+        this._roundRect(g, -50, 2, 90, 5, 2, GOLD);
+        // Two wheels: dark tyre + white hub + gold centre.
+        for (const wx of [-38, 38]) {
             g.fillColor = DARK;
-            g.circle(wx, -16, 14);
+            g.circle(wx, -14, 13);
             g.fill();
             g.fillColor = W;
-            g.circle(wx, -16, 6);
+            g.circle(wx, -14, 5.5);
+            g.fill();
+            g.fillColor = GOLD;
+            g.circle(wx, -14, 2.5);
             g.fill();
         }
     }
 
-    /** The kart's stale "即将上线" badge becomes a live "★ 新上线" pill. */
+    /** The kart's stale "即将上线" badge becomes a live "★ 新上线" pill.
+     * drive130: the badge sat at top-right (196, 88) on top of the
+     * title — moved to the top-LEFT corner so "飞车狂飙" reads in full. */
     private _buildKartBadge (btn: Node) {
         const badge = btn.getChildByName('badge');
         if (!badge) {
             return;
         }
         this._badgeNode = badge;
-        badge.setPosition(196, 88, 0);
+        badge.setPosition(-205, 88, 0);
         const bt = badge.getComponent(UITransform);
         if (bt) {
             bt.setContentSize(170, 44);
         }
-        const bg = this._gfxNode(btn, 'badgeBg', 196, 88, 170, 44, badge);
+        const bg = this._gfxNode(btn, 'badgeBg', -205, 88, 170, 44, badge);
         this._badgeBg = bg.node;
         this._roundRect(bg, -85, -22, 170, 44, 22, col(255, 196, 0, 255));
         bg.strokeColor = col(255, 255, 255, 230);
