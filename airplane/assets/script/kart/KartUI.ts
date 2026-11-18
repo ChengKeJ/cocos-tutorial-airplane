@@ -15,7 +15,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find } from 'cc';
 import { KartGame } from './KartGame';
-import { ITEM_NAMES } from './KartConstants';
+import { ITEM_NAMES, KartConstants } from './KartConstants';
 const { ccclass, property } = _decorator;
 
 const GOLD = new Color(255, 196, 0, 255);
@@ -52,6 +52,9 @@ export class KartUI extends Component {
     private _minimapNode: Node = null;
     private _minimapT = 0;
     private _hudRoot: Node = null;
+    // Pass A: speed lines — radial streaks that fade in with speed
+    private _speedLines: Graphics = null;
+    private _speedLinesT = 0;
 
     // panels
     private _menuPanel: Node = null;
@@ -131,6 +134,17 @@ export class KartUI extends Component {
             if (this._minimapT > 0.25) {
                 this._minimapT = 0;
                 this._drawMinimap();
+            }
+            // speed lines: fade in above ~55% top speed, redrawn 8 Hz
+            this._speedLinesT += dt;
+            const spd = this._game.karts[0] ? this._game.karts[0].speed : 0;
+            if (this._game.state === 'racing' && spd > 16) {
+                if (this._speedLinesT > 0.12) {
+                    this._speedLinesT = 0;
+                    this._drawSpeedLines(spd / KartConstants.BASE_TOP_SPEED);
+                }
+            } else if (this._speedLines) {
+                this._speedLines.clear();
             }
         } else {
             this._game.steerInput = 0;
@@ -420,6 +434,14 @@ export class KartUI extends Component {
         mt.setContentSize(190, 190);
         this._minimap = mm.addComponent(Graphics);
         this._minimapNode = mm;
+        // speed-lines overlay (full screen, drawn under the buttons)
+        const sl = new Node('speedLines');
+        sl.layer = Layers.Enum.UI_2D;
+        sl.setParent(hud);
+        sl.setPosition(0, 0, 0);
+        const st = sl.addComponent(UITransform);
+        st.setContentSize(720, 1280);
+        this._speedLines = sl.addComponent(Graphics);
         // NOTE: the floating stick is driven by the global input listeners
         // (onEnable), not by a node — the input system fires for any touch.
     }
@@ -510,6 +532,27 @@ export class KartUI extends Component {
 
     private _hideStick() {
         if (this._stickBase) { this._stickBase.active = false; }
+    }
+
+    // ---- speed lines ----
+
+    /** Radial streaks from the centre outward; alpha grows with speed. */
+    private _drawSpeedLines(ratio: number): void {
+        if (!this._speedLines) { return; }
+        const g = this._speedLines;
+        g.clear();
+        const a = Math.round(40 + Math.min(1, ratio) * 110);
+        g.strokeColor = new Color(255, 255, 255, a);
+        g.lineWidth = 3;
+        for (let i = 0; i < 12; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const r1 = 130 + Math.random() * 90;
+            const r2 = r1 + 60 + Math.random() * 130;
+            const c = Math.cos(ang), s = Math.sin(ang);
+            g.moveTo(c * r1, s * r1);
+            g.lineTo(c * r2, s * r2);
+        }
+        g.stroke();
     }
 
     // ---- minimap ----
