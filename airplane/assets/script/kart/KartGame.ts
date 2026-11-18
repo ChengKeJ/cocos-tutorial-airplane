@@ -14,7 +14,7 @@
  * KartUI (on the Canvas) drives input + HUD and sets game.ui = itself.
  */
 
-import { _decorator, AudioClip, AudioSource, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
+import { _decorator, AudioClip, AudioSource, Camera, Color, Component, DirectionalLight, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
 import { ItemKind, KartConstants, PAINTS, PaintScheme, ROSTER, paintTapResult, parseOwnedPaints, parseSelectedPaints, rewardForFinish, rosterOrder } from './KartConstants';
 import { KartTrack, MeshBuilder, TrackFrame, trackDefById } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
@@ -407,6 +407,19 @@ export class KartGame extends Component {
 
         // selected track world (karts / items are created after this)
         this._rebuildTrack();
+
+        // AAA rework: a real sun. kart.scene has no directional light
+        // node at all, and the PBR kart paint needs a directional source
+        // for specular pops — created in code (safer than scene JSON).
+        // It shines from behind-above, so the chase cam sees the karts'
+        // rear lit and the glossy paint catches the light.
+        const sun = new Node('sun');
+        sun.layer = Layers.Enum.DEFAULT;
+        sun.setParent(this.node);
+        sun.setRotationFromEuler(-55, 180, 0);
+        const sunLight = sun.addComponent(DirectionalLight);
+        sunLight.illuminance = 2.0;
+        sunLight.color = new Color(255, 244, 214, 255);
 
         const kartsRoot = new Node('karts');
         kartsRoot.setParent(this.node);
