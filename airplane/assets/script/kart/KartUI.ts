@@ -16,7 +16,7 @@
 import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find, view } from 'cc';
 import { KartGame } from './KartGame';
 import { TRACK_DEFS } from './KartTrack';
-import { ITEM_NAMES, KartConstants, ROSTER } from './KartConstants';
+import { ITEM_NAMES, KartConstants, PAINTS, ROSTER } from './KartConstants';
 const { ccclass, property } = _decorator;
 
 const GOLD = new Color(255, 196, 0, 255);
@@ -93,6 +93,10 @@ export class KartUI extends Component {
     private _kartBtnLabels: Label[] = [];
     private _kartNameLabel: Label = null;
     private _kartStatsLabel: Label = null;
+    // progression (Phase 2 step 3): coins + races/wins line, and the
+    // selected kart's 3 paint buttons (default + 2 unlockables).
+    private _coinsLabel: Label = null;
+    private _paintBtnLabels: Label[] = [];
     private _resultsPanel: Node = null;
     private _resultsLabel: Label = null;
     private _resultsTitle: Label = null;
@@ -209,6 +213,7 @@ export class KartUI extends Component {
             this.showHud(false);
             this._refreshTrackUI();
             this._refreshKartUI();
+            this._refreshProgressUI();
             this._redrawScrim();
             this._setPlayerKartVisible(false);
         } else {
@@ -297,6 +302,50 @@ export class KartUI extends Component {
                 + '  加速 ' + statDots(d.accel)
                 + '  漂移 ' + statDots(d.drift);
         }
+        this._refreshPaintUI();
+    }
+
+    /** Coins + races/wins line at the top of the menu. */
+    private _refreshProgressUI(): void {
+        if (!this._game) { return; }
+        if (this._coinsLabel) {
+            this._coinsLabel.string = '🪙 ' + this._game.coins + ' 金币 · 已跑 '
+                + this._game.races + ' 场 · 胜 ' + this._game.wins + ' 场';
+        }
+    }
+
+    /** Paint buttons for the selected kart: ✓ on the equipped paint,
+     * 🔒 + price on locked ones. */
+    private _refreshPaintUI(): void {
+        if (!this._game) { return; }
+        const sel = this._game.selectedKart;
+        const owned = this._game.paintsOwned(sel);
+        const cur = this._game.selectedPaint(sel);
+        for (let p = 0; p < 3 && p < this._paintBtnLabels.length; p++) {
+            const paint = PAINTS[sel][p];
+            let s = (p === cur ? '✓ ' : '') + paint.name;
+            if (!owned[p]) { s += ' 🔒' + paint.price; }
+            this._paintBtnLabels[p].string = s;
+        }
+    }
+
+    /** Tap a paint button: owned -> equip, locked + affordable -> buy +
+     * equip, locked + too poor -> toast (the toast label lives on the
+     * Canvas, so it shows in the menu too). */
+    private _onPaintTap(p: number): void {
+        if (!this._game) { return; }
+        const res = this._game.tapPaint(this._game.selectedKart, p);
+        if (res === 'poor') {
+            this.showToast('金币不够，再跑几场吧！');
+            return;
+        }
+        if (res === 'invalid') { return; }
+        this._refreshPaintUI();
+        this._refreshProgressUI();
+        // the rebuild recreates the kart nodes (active again) — re-hide
+        // the player kart while the menu is still up.
+        this._setPlayerKartVisible(false);
+        if (res === 'bought') { this.showToast('已解锁新涂装！'); }
     }
 
     private _selectKart(i: number): void {
@@ -369,6 +418,14 @@ export class KartUI extends Component {
                 const t = r.time > 0 ? fmtTime(r.time) : '--:--.-';
                 const best = r.bestLap > 0 ? ' · 最快 ' + fmtTime(r.bestLap) : '';
                 lines.push((i + 1) + '. ' + r.name + (r.isPlayer ? ' (你)' : '') + '  ' + t + best);
+            }
+            // Phase 2 step 3: race rewards (coins earned this race).
+            if (this._game) {
+                const rw = this._game.lastReward;
+                if (rw > 0) {
+                    lines.push('');
+                    lines.push('🪙 +' + rw + ' 金币' + (this._game.lastNewBest ? ' · 新纪录！' : ''));
+                }
             }
             this._resultsLabel.string = lines.join('\n');
         }
@@ -602,7 +659,10 @@ export class KartUI extends Component {
         // final-lap / big banner (centre, above the countdown spot)
         this._bannerLabel = this._makeLabel(this._canvas, 'bannerLabel', 0, 250, 48, GOLD, '');
         this._bannerLabel.node.active = false;
-        this._toastLabel = this._makeLabel(hud, 'toastLabel', 0, -100, 28, WHITE, '');
+        // toast: built on the Canvas (not the HUD) so menu feedback —
+        // e.g. "金币不够" when tapping a locked paint — is visible too.
+        // It auto-hides after 1.6 s in update(), in any state.
+        this._toastLabel = this._makeLabel(this._canvas, 'toastLabel', 0, -100, 28, WHITE, '');
         this._toastLabel.node.active = false;
 
         // pause button (top-right corner)
@@ -665,14 +725,16 @@ export class KartUI extends Component {
         // solid backing panels behind the bare text labels (desc + best,
         // and the hint line at the bottom): the full-screen scrim alone
         // could not hide the yellow centre dashes behind them. descBest
-        // panel spans y -150..-40 around desc (y -67) + best (y -122);
-        // hint panel spans y -531..-479 around the hint (y -505); the
+        // panel spans y -230..-120 around desc (y -147) + best (y -202);
+        // hint panel spans y -611..-559 around the hint (y -585); the
         // kart detail panel spans y 64..160 around name (y 130) + stats
         // (y 96). Buttons are solid already, so they need no panel.
-        this._makeBackingPanel(menu, 'descBestPanel', 0, -95, 680, 110, 18);
-        this._makeBackingPanel(menu, 'hintPanel', 0, -505, 680, 52, 14);
+        this._makeBackingPanel(menu, 'descBestPanel', 0, -175, 680, 110, 18);
+        this._makeBackingPanel(menu, 'hintPanel', 0, -585, 680, 52, 14);
         this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
+        // progression (Phase 2 step 3): coins + races/wins, top of the menu.
+        this._coinsLabel = this._makeLabel(menu, 'coins', 0, 420, 26, GOLD, '');
         // kart select: 8 chips in one row (body colour, dark text on
         // light colours), ✓ on the player's pick; the selected kart's
         // name/tagline + 1..5 stat dots sit on the panel below.
@@ -690,6 +752,18 @@ export class KartUI extends Component {
         this._makeBackingPanel(menu, 'kartDetailPanel', 0, 112, 680, 96, 16);
         this._kartNameLabel = this._makeLabel(menu, 'kartName', 0, 130, 28, WHITE, '');
         this._kartStatsLabel = this._makeLabel(menu, 'kartStats', 0, 96, 24, GOLD, '');
+        // paints (Phase 2 step 3): 3 schemes for the selected kart —
+        // default + 2 unlockables. Labels refresh in _refreshPaintUI
+        // (✓ equipped, 🔒 + price locked). The lower block (track
+        // buttons on down) moved 80 px down to make room for this row.
+        for (let p = 0; p < 3; p++) {
+            const x = (p - 1) * 230;
+            const btn = this._makeButton(menu, 'paintBtn' + p, x, 30, 210, 54,
+                '', 22, new Color(40, 50, 70, 255),
+                () => { this._onPaintTap(p); });
+            const lab = btn.getChildByName('label');
+            if (lab) { this._paintBtnLabels.push(lab.getComponent(Label)); }
+        }
         // track select: two circuits, each playable fwd + reverse.
         // Icons are decorative; the ✓ prefix marks the selected one.
         // (TRACK_ICONS is module-level: _refreshTrackUI re-applies the same
@@ -698,23 +772,23 @@ export class KartUI extends Component {
             const d = TRACK_DEFS[i];
             const icon = i < TRACK_ICONS.length ? TRACK_ICONS[i] : '';
             const x = i === 0 ? -125 : 125;
-            const btn = this._makeButton(menu, 'trackBtn' + d.id, x, 0, 230, 90,
+            const btn = this._makeButton(menu, 'trackBtn' + d.id, x, -80, 230, 90,
                 icon + ' ' + d.name, 30, new Color(40, 90, 60, 255),
                 () => { this._selectTrack(d.id); });
             const lab = btn.getChildByName('label');
             if (lab) { this._trackBtnLabels.push(lab.getComponent(Label)); }
         }
-        this._trackDescLabel = this._makeLabel(menu, 'trackDesc', 0, -67, 24, GREY, '');
-        this._menuBestLabel = this._makeLabel(menu, 'best', 0, -122, 28, GOLD, '');
+        this._trackDescLabel = this._makeLabel(menu, 'trackDesc', 0, -147, 24, GREY, '');
+        this._menuBestLabel = this._makeLabel(menu, 'best', 0, -202, 28, GOLD, '');
         // mode select: 正赛 drives the circuit forward, 逆向 drives the
         // same centreline the other way (reversed checkpoints / racing line).
-        this._makeButton(menu, 'startFwdBtn', 0, -205, 480, 100, '🏁 正赛开始', 42,
+        this._makeButton(menu, 'startFwdBtn', 0, -285, 480, 100, '🏁 正赛开始', 42,
             new Color(30, 120, 220, 255), () => { if (this._game) { this._game.startRaceInMode(false); } });
-        this._makeButton(menu, 'startRevBtn', 0, -315, 480, 100, '🔄 逆向开始', 42,
+        this._makeButton(menu, 'startRevBtn', 0, -395, 480, 100, '🔄 逆向开始', 42,
             new Color(150, 80, 200, 255), () => { if (this._game) { this._game.startRaceInMode(true); } });
-        this._makeButton(menu, 'hallBtn', 0, -425, 480, 100, '回大厅', 40,
+        this._makeButton(menu, 'hallBtn', 0, -505, 480, 100, '回大厅', 40,
             new Color(90, 100, 120, 255), () => { if (this._game) { this._game.quitToHall(); } });
-        this._makeLabel(menu, 'hint', 0, -505, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
+        this._makeLabel(menu, 'hint', 0, -585, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
 
         // --- results ---
         const res = new Node('kartResults');
