@@ -1133,6 +1133,28 @@ export class KartTrack {
                 new Vec3(pos.x + nx * 0.12, y + 3.4, pos.z + nz * 0.12), yaw, 4.6, 1.9, 0.25);
             b.addBox(0xffffff,
                 new Vec3(pos.x + nx * 0.14, y + 4.15, pos.z + nz * 0.14), yaw, 4.6, 0.28, 0.28);
+            // billboard content (fix131): the coloured face was blank — a
+            // gold 5-point star + a white bar, proud of the face so they
+            // never z-fight. Both windings are emitted so the star reads
+            // from the road whichever way the unlit material culls.
+            const starC = new Vec3(pos.x + nx * 0.26, y + 3.45, pos.z + nz * 0.26);
+            const starPos: number[] = [starC.x, starC.y, starC.z];
+            const starNor: number[] = [nx, 0, nz];
+            const starUv: number[] = [0, 0];
+            for (let vi = 0; vi < 10; vi++) {
+                const a = Math.PI / 2 + vi * Math.PI / 5;
+                const r = (vi % 2 === 0) ? 0.55 : 0.22;
+                starPos.push(starC.x + (-nz) * Math.cos(a) * r, starC.y + Math.sin(a) * r, starC.z + nx * Math.cos(a) * r);
+                starNor.push(nx, 0, nz);
+                starUv.push(0, 0);
+            }
+            const starIdx: number[] = [];
+            for (let vi = 1; vi <= 10; vi++) {
+                const nxt = vi === 10 ? 1 : vi + 1;
+                starIdx.push(0, nxt, vi, 0, vi, nxt);
+            }
+            b.addGeometry(0xf5d020, starPos, starNor, starUv, starIdx);
+            b.addBox(0xffffff, new Vec3(pos.x + nx * 0.26, y + 2.65, pos.z + nz * 0.26), yaw, 2.4, 0.16, 0.05);
             bi++;
         }
 
@@ -1173,8 +1195,12 @@ export class KartTrack {
             } else {
                 b.addCone(col, new Vec3(mx, h / 2 - 0.5, mz), 0, base, h, 6);
                 if (h > 95) {
-                    const capH = h * 0.36;
-                    b.addCone(0xffffff, new Vec3(mx, h - 0.5 - capH / 2, mz), 0, base * 0.36, capH, 6);
+                    // fix131: the old cap shared the mountain's apex and
+                    // its base ring was coplanar with the flank, which
+                    // z-fought into a moire/dither band — the new cap is
+                    // wider, slightly shorter and sits ~1 m proud.
+                    const capH = h * 0.36 * 0.92;
+                    b.addCone(0xf2f7ff, new Vec3(mx, h - 0.5 - capH / 2 + 1.5, mz), 0, base * 0.40, capH, 6);
                 }
             }
         }
@@ -1314,17 +1340,19 @@ export class KartTrack {
             }
         }
 
-        // start gantry at s = 0 (PBR navy beam + pennant flags)
+        // start gantry at s = 0 (PBR navy beam + pennant flags). fix131:
+        // the old 0x182650 navy read as a black bar against the sky from
+        // behind — lighter blue, so the beam reads as a beam, not a bar.
         this.sampleAt(0, f);
         const gyaw = Math.atan2(f.tangent.x, f.tangent.z);
         for (const side of [-1, 1]) {
             this.posAt(0, side * (f.half + 0.8), pos);
-            sb.addBox(0x182650, new Vec3(pos.x, pos.y + 3.25, pos.z), gyaw, 0.5, 6.5, 0.5, 0.6, 0.35);
+            sb.addBox(0x33507e, new Vec3(pos.x, pos.y + 3.25, pos.z), gyaw, 0.5, 6.5, 0.5, 0.6, 0.35);
             sb.addBox(side < 0 ? 0xe63946 : 0xf5d020,
                 new Vec3(pos.x, pos.y + 7.0, pos.z), gyaw, 0.12, 1.0, 1.6, 0.1, 0.4);
         }
         this.posAt(0, 0, pos);
-        sb.addBox(0x182650, new Vec3(pos.x, pos.y + 6.5, pos.z), gyaw, f.half * 2 + 2.2, 1.4, 0.5, 0.6, 0.35);
+        sb.addBox(0x33507e, new Vec3(pos.x, pos.y + 6.5, pos.z), gyaw, f.half * 2 + 2.2, 1.4, 0.5, 0.6, 0.35);
         // checkered start strip under the beam (replaces the old yellow bar)
         const stripW = f.half * 2 + 2.2;
         const segW = stripW / 8;
@@ -1347,14 +1375,16 @@ export class KartTrack {
             }
         }
 
-        // boost pads (PBR cyan, emissive, + white chevrons pointing forward)
+        // boost pads (PBR cyan, emissive, + white chevrons pointing forward).
+        // fix131: the old full-cyan emissive filled the screen when driven
+        // over — deeper cyan, ~40% emissive, rougher.
         for (const pad of this.def.boostPads) {
             const mid = ((pad.t0 + pad.t1) / 2) * this.length;
             const len = (pad.t1 - pad.t0) * this.length;
             this.sampleAt(mid, f);
             const yaw = Math.atan2(f.tangent.x, f.tangent.z);
             this.posAt(mid, pad.lat, pos);
-            sb.addBox(0x00d2ff, new Vec3(pos.x, pos.y + 0.14, pos.z), yaw, pad.hw * 2, 0.06, len, 0, 0.3, 0x00d2ff);
+            sb.addBox(0x00a8cc, new Vec3(pos.x, pos.y + 0.14, pos.z), yaw, pad.hw * 2, 0.06, len, 0, 0.45, 0x006a88);
             for (const cside of [-1, 1]) {
                 b.addBox(0xffffff,
                     new Vec3(pos.x + f.right.x * cside * 0.9, pos.y + 0.2, pos.z + f.right.z * cside * 0.9),
