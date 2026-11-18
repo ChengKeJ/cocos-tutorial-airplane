@@ -171,8 +171,8 @@ const TRACK_SUNSET: TrackDef = {
         { t0: 0.9575, t1: 0.9740, lat: -3.1, hw: 2.2 },
         { t0: 0.9575, t1: 0.9740, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x585d6c,
-    roadAlt: 0x5e636f,
+    road: 0x666b78,
+    roadAlt: 0x6c717e,
     shoulder: 0x2e3138,
     curbA: 0xe63946,
     curbB: 0xf5f0e6,
@@ -266,8 +266,8 @@ const TRACK_CANYON: TrackDef = {
         { t0: 0.9050, t1: 0.9220, lat: -3.1, hw: 2.2 },
         { t0: 0.9050, t1: 0.9220, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x5f4a3a,
-    roadAlt: 0x66503f,
+    road: 0x6b5646,
+    roadAlt: 0x715c48,
     shoulder: 0x3a2d24,
     curbA: 0xd94f30,
     curbB: 0xf5ead6,
@@ -1386,17 +1386,36 @@ export class KartTrack {
         // boost pads (PBR cyan, emissive, + white chevrons pointing forward).
         // fix131: the old full-cyan emissive filled the screen when driven
         // over — deeper cyan, ~40% emissive, rougher.
+        // fix133: the pad STILL read as a giant flat cyan slab in the
+        // tunnel (49y-race-boost.png) — 5.2 m wide, 28 m long, floating
+        // 0.11 m above the road. Now a thin marked pad, not a slab: 70%
+        // width, 0.04 thick sitting on the road (top 0.06), darker cyan
+        // with much less emissive, a dark border strip down each side,
+        // and 3 chevron stations along its length so it reads as road
+        // markings. Gameplay (padBoostAt, defs) is untouched — this is
+        // visual only.
         for (const pad of this.def.boostPads) {
             const mid = ((pad.t0 + pad.t1) / 2) * this.length;
             const len = (pad.t1 - pad.t0) * this.length;
             this.sampleAt(mid, f);
             const yaw = Math.atan2(f.tangent.x, f.tangent.z);
             this.posAt(mid, pad.lat, pos);
-            sb.addBox(0x00a8cc, new Vec3(pos.x, pos.y + 0.14, pos.z), yaw, pad.hw * 2, 0.06, len, 0, 0.45, 0x006a88);
-            for (const cside of [-1, 1]) {
-                b.addBox(0xffffff,
-                    new Vec3(pos.x + f.right.x * cside * 0.9, pos.y + 0.2, pos.z + f.right.z * cside * 0.9),
-                    yaw + cside * 0.6, 0.35, 0.05, 2.2);
+            const visHw = pad.hw * 0.7; // visual half-width (gameplay hw unchanged)
+            sb.addBox(0x0090b8, new Vec3(pos.x, pos.y + 0.04, pos.z), yaw, visHw * 2, 0.04, len, 0, 0.6, 0x003a4a);
+            for (const eside of [-1, 1]) {
+                sb.addBox(0x0a3a44,
+                    new Vec3(pos.x + f.right.x * eside * (visHw - 0.09), pos.y + 0.06, pos.z + f.right.z * eside * (visHw - 0.09)),
+                    yaw, 0.18, 0.03, len, 0, 0.6, 0x002228);
+            }
+            for (const ds of [-0.3, 0, 0.3]) {
+                const along = ds * len;
+                for (const cside of [-1, 1]) {
+                    b.addBox(0xffffff,
+                        new Vec3(pos.x + f.tangent.x * along + f.right.x * cside * 0.7,
+                            pos.y + 0.075,
+                            pos.z + f.tangent.z * along + f.right.z * cside * 0.7),
+                        yaw + cside * 0.6, 0.5, 0.03, 3.2);
+                }
             }
         }
 
