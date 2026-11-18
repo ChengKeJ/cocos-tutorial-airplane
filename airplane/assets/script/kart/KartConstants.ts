@@ -106,6 +106,8 @@ export class KartConstants {
     /** Countdown beats: 3, 2, 1, GO — seconds per beat after a 0.4s lead-in. */
     public static readonly COUNTDOWN_LEAD = 0.4;
     public static readonly COUNTDOWN_BEAT = 0.8;
+    /** Seconds the green GO! + all-green lights stay up before the race starts. */
+    public static readonly GO_HOLD = 0.7;
     /** Seconds fully off-track before respawn. */
     public static readonly OOB_LIMIT = 1.5;
     /** Seconds after the player finishes before results settle. */
