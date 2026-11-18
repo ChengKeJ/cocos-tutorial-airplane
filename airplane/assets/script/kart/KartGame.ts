@@ -46,8 +46,8 @@ const CAM_LOOK = 4.5; // metres ahead to look at (was 6)
 const CAM_LOOK_Y = 0.9;
 const FOV_BASE = 62; // was 60
 const FOV_KICK = 14; // + at top speed (was 8)
-const SMOKE_POOL = 40;
-const SPARK_POOL = 24; // drift-spark pool (step 4): small bright orange nodes
+const SMOKE_POOL = 56; // AAA: bigger puffs need more heads
+const SPARK_POOL = 36; // drift-spark pool (step 4): small bright orange nodes
 
 interface KartState {
     model: KartModel;
@@ -176,12 +176,12 @@ export class KartGame extends Component {
         half: 0, bank: 0, zone: 0, raceLat: 0,
     };
     // ---- Pass A feel FX ----
-    private _smoke: Array<{ node: Node; life: number; maxLife: number }> = [];
+    private _smoke: Array<{ node: Node; life: number; maxLife: number; vx: number; vz: number }> = [];
     private _smokePos = new Vec3();
     private _shakeAmp = 0;
     private _lastCollideShake = -10;
     // ---- Step 4 feel FX ----
-    private _sparks: Array<{ node: Node; life: number; maxLife: number }> = [];
+    private _sparks: Array<{ node: Node; life: number; maxLife: number; vx: number; vy: number; vz: number }> = [];
     private _fovKick = 0; // extra FOV on boost, decays in _updateCamera
     private _lastWallThud = -10; // raceTime of the last wall-thud (throttled)
     // ---- Pass E presentation ----
@@ -328,15 +328,20 @@ export class KartGame extends Component {
     private _makeKart(i: number, stats: typeof ROSTER[0]): KartState {
         const model = buildKartModel(stats, i === 0 ? this._paintFor(this._kartIdx) : null);
         model.root.setParent(this._kartsRoot);
-        // boost flame: orange cone + yellow core, tip pointing backwards
-        // (-Z). Built once per kart, toggled while boostTime > 0.
+        // boost flame: 4-layer cone (deep orange -> amber -> yellow ->
+        // white-hot core), tip pointing backwards (-Z). Built once per
+        // kart, toggled while boostTime > 0; the flicker in
+        // _updateVisuals scales it up with the boost tier, so a tier-3
+        // mini-turbo / pad boost reads bigger than a tier-1.
         const flame = new Node('flame');
         flame.layer = Layers.Enum.DEFAULT;
         flame.setParent(model.root);
         flame.setPosition(0, 0.55, -1.15);
         const fb = new MeshBuilder();
-        fb.addCone(0xff7a1a, new Vec3(0, 0, 0), 0, 0.34, 1.1, 8, -Math.PI / 2);
-        fb.addCone(0xffd23f, new Vec3(0, 0, 0.18), 0, 0.2, 0.7, 8, -Math.PI / 2);
+        fb.addCone(0xff7a1a, new Vec3(0, 0, 0), 0, 0.44, 1.5, 10, -Math.PI / 2);
+        fb.addCone(0xffb020, new Vec3(0, 0, 0.12), 0, 0.32, 1.15, 10, -Math.PI / 2);
+        fb.addCone(0xffd23f, new Vec3(0, 0, 0.22), 0, 0.2, 0.8, 8, -Math.PI / 2);
+        fb.addCone(0xfff6c9, new Vec3(0, 0, 0.3), 0, 0.11, 0.5, 8, -Math.PI / 2);
         fb.build(flame);
         flame.active = false;
         const pos = new Vec3();
@@ -458,7 +463,7 @@ export class KartGame extends Component {
             r.mesh = smokeMesh;
             r.setMaterial(smokeMat, 0);
             node.active = false;
-            this._smoke.push({ node, life: 0, maxLife: 0.7 });
+            this._smoke.push({ node, life: 0, maxLife: 0.7, vx: 0, vz: 0 });
         }
 
         this._items = new KartItems(this._track, this.node);
@@ -481,7 +486,7 @@ export class KartGame extends Component {
             r.mesh = sparkMesh;
             r.setMaterial(sparkMat, 0);
             node.active = false;
-            this._sparks.push({ node, life: 0, maxLife: 0.35 });
+            this._sparks.push({ node, life: 0, maxLife: 0.35, vx: 0, vy: 0, vz: 0 });
         }
 
         // Pass D: audio — three runtime sources (BGM loop, engine loop,
@@ -1032,12 +1037,14 @@ export class KartGame extends Component {
             // body lean: into the drift, out of the turn otherwise
             const lean = k.driftTime > 0 ? -k.driftDir * 8 : -k.steer * 4;
             k.model.body.eulerAngles = new Vec3(0, 0, lean);
-            // boost flame: on while boosting, flickers
+            // boost flame: on while boosting, flickers; stronger boosts
+            // (tier 2/3 mini-turbo, pad) read bigger and longer
             const boosting = k.boostTime > 0 && !k.finished;
             k.flame.active = boosting;
             if (boosting) {
-                const f = 0.85 + 0.3 * Math.sin(this._raceTime * 43 + k.sTotal * 0.1);
-                k.flame.setScale(f, f, 0.8 + 0.5 * Math.random());
+                const tier = k.boostMul >= 1.3 ? 1.25 : k.boostMul >= 1.2 ? 1.12 : 1;
+                const f = (0.85 + 0.35 * Math.sin(this._raceTime * 43 + k.sTotal * 0.1)) * tier;
+                k.flame.setScale(f, f, (0.8 + 0.6 * Math.random()) * tier);
             }
             // drift smoke: rear-wheel puffs while drifting (nearby karts only).
             // No new puffs once results are up — the panel is on screen and
@@ -1047,12 +1054,17 @@ export class KartGame extends Component {
                 while (k.smokeAcc >= 0.05) {
                     k.smokeAcc -= 0.05;
                     const side = Math.random() < 0.5 ? -0.85 : 0.85;
+                    const sideSign = side < 0 ? -1 : 1;
                     this._track.posAt(k.sTotal - 1.1, k.d + side, this._smokePos);
-                    this._spawnSmoke(this._smokePos.x, this._smokePos.y + 0.25, this._smokePos.z);
+                    // puffs billow outward from the wheel, along the road's
+                    // lateral axis; sparks burst the same way, faster
+                    const ovx = frame.right.x * sideSign * 1.6;
+                    const ovz = frame.right.z * sideSign * 1.6;
+                    this._spawnSmoke(this._smokePos.x, this._smokePos.y + 0.25, this._smokePos.z, ovx, ovz);
                     // step 4: drift sparks — bright orange flecks at the
                     // same rear wheels, fewer and faster than the smoke
-                    if (Math.random() < 0.6) {
-                        this._spawnSpark(this._smokePos.x, this._smokePos.y + 0.15, this._smokePos.z);
+                    if (Math.random() < 0.8) {
+                        this._spawnSpark(this._smokePos.x, this._smokePos.y + 0.15, this._smokePos.z, ovx * 2.2, ovz * 2.2);
                     }
                 }
             }
@@ -1109,13 +1121,16 @@ export class KartGame extends Component {
         for (const s of this._sparks) { s.node.active = false; }
     }
 
-    private _spawnSmoke(x: number, y: number, z: number): void {
+    /** AAA: bigger, longer-lived puffs that billow outward from the wheel. */
+    private _spawnSmoke(x: number, y: number, z: number, vx: number = 0, vz: number = 0): void {
         for (const s of this._smoke) {
             if (s.node.active) { continue; }
             s.node.active = true;
             s.node.setPosition(x, y, z);
-            s.life = s.maxLife = 0.55 + Math.random() * 0.25;
-            s.node.setScale(0.35, 0.35, 0.35);
+            s.life = s.maxLife = 0.7 + Math.random() * 0.35;
+            s.vx = vx;
+            s.vz = vz;
+            s.node.setScale(0.45, 0.45, 0.45);
             return;
         }
     }
@@ -1126,37 +1141,41 @@ export class KartGame extends Component {
             s.life -= dt;
             if (s.life <= 0) { s.node.active = false; continue; }
             const t = 1 - s.life / s.maxLife; // 0..1 grown
-            const grow = 0.35 + t * 1.1;
+            const grow = 0.45 + t * 1.5;
             const end = s.life < 0.18 ? Math.max(0.05, s.life / 0.18) : 1;
             s.node.setScale(grow * end, grow * end, grow * end);
             const p = s.node.position;
-            s.node.setPosition(p.x, p.y + dt * 0.9, p.z);
+            s.node.setPosition(p.x + s.vx * dt, p.y + dt * 1.1, p.z + s.vz * dt);
         }
     }
 
     /** Step 4: grab a free spark node, light it at the rear wheel. */
-    private _spawnSpark(x: number, y: number, z: number): void {
+    private _spawnSpark(x: number, y: number, z: number, vx: number = 0, vz: number = 0): void {
         for (const s of this._sparks) {
             if (s.node.active) { continue; }
             s.node.active = true;
             s.node.setPosition(x, y, z);
-            s.life = s.maxLife = 0.25 + Math.random() * 0.15;
-            s.node.setScale(0.22, 0.22, 0.22);
+            s.life = s.maxLife = 0.3 + Math.random() * 0.2;
+            s.vx = vx;
+            s.vy = 2.0 + Math.random() * 1.5;
+            s.vz = vz;
+            s.node.setScale(0.26, 0.26, 0.26);
             return;
         }
     }
 
-    /** Step 4: sparks shrink fast and flicker out (no lingering glow). */
+    /** Step 4: sparks burst outward, arc up, then fall and flicker out. */
     private _updateSparks(dt: number): void {
         for (const s of this._sparks) {
             if (!s.node.active) { continue; }
             s.life -= dt;
             if (s.life <= 0) { s.node.active = false; continue; }
             const t = s.life / s.maxLife; // 1..0 shrinking
-            const sc = 0.22 * t;
+            const sc = 0.26 * t;
             s.node.setScale(sc, sc, sc);
+            s.vy -= 6 * dt; // gravity: the burst arcs and falls
             const p = s.node.position;
-            s.node.setPosition(p.x, p.y + dt * 1.4, p.z);
+            s.node.setPosition(p.x + s.vx * dt, p.y + s.vy * dt, p.z + s.vz * dt);
         }
     }
 
