@@ -21,7 +21,7 @@
 
 import { Layers, Material, ModelComponent, Node, Vec3, primitives, utils } from 'cc';
 import { MeshBuilder } from './KartTrack';
-import { DriverStats } from './KartConstants';
+import { DriverStats, PaintScheme } from './KartConstants';
 
 export interface KartModel {
     root: Node;
@@ -129,11 +129,13 @@ function addMeshNode(parent: Node, name: string, mesh: any, mat: Material): Node
 
 /** Build one kart from its roster entry. The shape varies per driver
  * (spoiler style, nose shape, side-pod size, accent stripe + helmet)
- * so the 8 karts read as distinct characters, not recolours. */
-export function buildKartModel(stats: DriverStats): KartModel {
-    const colour = stats.color;
-    const dark = stats.dark;
-    const accent = stats.accent;
+ * so the 8 karts read as distinct characters, not recolours.
+ * Phase 2 step 3: `paint` (when given) overrides the body / dark /
+ * accent colours with an unlocked paint scheme — same model, new look. */
+export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): KartModel {
+    const colour = paint ? paint.color : stats.color;
+    const dark = paint ? paint.dark : stats.dark;
+    const accent = paint ? paint.accent : stats.accent;
     const root = new Node('kart');
     root.layer = Layers.Enum.DEFAULT;
 
