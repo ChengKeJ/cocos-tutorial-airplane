@@ -124,6 +124,12 @@ export class KartUI extends Component {
         this._buildHud();
         this._buildPanels();
         this._buildStick();
+        // toast must render above the menu/results/pause panels: it is
+        // built in _buildHud() before the panels exist, so reparent it
+        // to the end of the Canvas children here (last child = drawn on
+        // top). Otherwise the menu panel covers it — that is why "金币
+        // 不够" / "已解锁新涂装！" fired but was invisible (drive124).
+        if (this._toastLabel) { this._toastLabel.node.setParent(this._canvas); }
         if (this._game && this._game.state === 'menu') { this.showMenu(); }
     }
 
@@ -661,8 +667,12 @@ export class KartUI extends Component {
         this._bannerLabel.node.active = false;
         // toast: built on the Canvas (not the HUD) so menu feedback —
         // e.g. "金币不够" when tapping a locked paint — is visible too.
-        // It auto-hides after 1.6 s in update(), in any state.
-        this._toastLabel = this._makeLabel(this._canvas, 'toastLabel', 0, -100, 28, WHITE, '');
+        // It auto-hides after 1.6 s in update(), in any state. Position
+        // y=460 is clear in both layouts: in the menu it sits above the
+        // coins line (y=420, top edge ~433); in a race it sits below the
+        // HUD labels (zone y=540, bottom edge ~528). The old spot (0,-100)
+        // sat inside the track/mode buttons and was covered by the menu.
+        this._toastLabel = this._makeLabel(this._canvas, 'toastLabel', 0, 460, 28, WHITE, '');
         this._toastLabel.node.active = false;
 
         // pause button (top-right corner)
