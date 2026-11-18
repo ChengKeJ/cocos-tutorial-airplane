@@ -99,7 +99,11 @@ export function dimHex(hex: number, f: number): number {
  * specular comes from the punctual sun/fill, so yellow paint went olive
  * and white went grey. Gloss here comes from LOW metallic (keeps the
  * diffuse) + LOW roughness (tight sun highlight): paint 0.15 / 0.12.
- * Same for helmet / driver / rims / detail; tires stay matte rubber. */
+ * fix134: roughness 0.12 -> 0.08 (with the fill at 80000 lux the
+ * highlight tightens further — the gloss the AAA pass needs) and the
+ * directional lights are physical lux now (KartGame.ts), so the
+ * specular is actually visible. Same for helmet / driver / rims /
+ * detail; tires stay matte rubber. */
 function materialForRole(role: string, hex: number): Material {
     // fix133: paint gets a small emissive (15% of its own colour) so a
     // rear face lit only by the fill can never go dark-olive — the
@@ -109,7 +113,7 @@ function materialForRole(role: string, hex: number): Material {
     // emissive is a floor under the paint colour, not a glow: it lifts
     // shadowed paint to its own hue while the sunlit side (2.6) still
     // dominates. Same finish for the procedural paint bodywork below.
-    if (role === 'paint') { return standardMaterial(hex, 0.15, 0.12, dimHex(hex, 0.15)); }
+    if (role === 'paint') { return standardMaterial(hex, 0.15, 0.08, dimHex(hex, 0.15)); }
     if (role === 'driver') { return standardMaterial(hex, 0.15, 0.30); }
     if (role === 'tire') { return standardMaterial(hex, 0.0, 0.95); }
     if (role === 'rim') { return standardMaterial(hex, 0.45, 0.18); }
@@ -176,10 +180,11 @@ export function kart2WingTri(cz: number): boolean {
 }
 
 /** One decoded triangle of a bucket: centroid + max vertex height +
- * max radial distance from the axle (sqrt(y^2+z^2) — the wheel axle
- * is the local X axis) + longest edge. maxR/maxEdge drive the kart 7
- * wheel-fin filter (fix133); the body filters only use cz/maxVy. */
-interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; maxR: number; maxEdge: number; }
+ * min/max |x| of its verts + max radial distance from the axle
+ * (sqrt(y^2+z^2) — the wheel axle is the local X axis) + longest edge.
+ * maxR/maxEdge drive the kart 7 wheel-fin filter (fix133); the body
+ * filters use cz/maxVy, and fix134 R4 uses minVx (see kart7DropTri). */
+interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; minVx: number; maxR: number; maxEdge: number; }
 
 /** fix132 kart 7 绯焰: drop the spiky rear (245 of 1242 body tris,
  * verified against the baked data):
@@ -188,6 +193,13 @@ interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; maxR: num
  *  R2 — the black nose-fin blade (the #101010 bucket's only geometry
  *  above y 0.55, at z 0.18..0.26);
  *  R3 — the front-corner spikes (past z 0.98, |x| > 0.30).
+ * fix134 R4 — the vertical side plates at x = ±0.62 (z -0.35..-0.59,
+ * y 0.02..0.40), which R1 misses because they are LOW (maxVy ≈ 0.28
+ * < 0.32) and R2/R3 miss because they are not #101010 and not past
+ * z 0.98. A plate triangle has ALL THREE verts outboard of ±0.58
+ * (minVx > 0.58); the main body reaches only |x| ≈ 0.50, and the
+ * front fairing panels that span out to 0.62 have a vert at lower
+ * |x|, so they survive. Drops 59 more tris (304 total, 938 kept).
  * fix133: the shipped call site passed this to filterBucketTriangles
  * WITHOUT the negation, so the game kept ONLY these 245 spike tris
  * and dropped the other 997 body triangles — from the side/front the
@@ -199,6 +211,7 @@ export function kart7DropTri(hex: string, g: TriGeom): boolean {
     if (g.cz < -0.40 && g.maxVy > 0.32) { return true; }
     if (hex.toLowerCase() === '#101010' && g.maxVy > 0.55) { return true; }
     if (g.cz > 0.98 && Math.abs(g.cx) > 0.30) { return true; }
+    if (g.minVx > 0.58) { return true; }
     return false;
 }
 
@@ -209,11 +222,16 @@ export function kart7DropTri(hex: string, g: TriGeom): boolean {
  * is one whose verts leave the tyre envelope: radial distance from
  * the axle (sqrt(y^2+z^2), axle = local X) past the tyre radius
  * (~0.29 rear / 0.24 front), or a longest edge >= 0.45 m (a tyre
- * triangle's longest edge is < 0.4). Drops 23 of 361 wheel tris,
- * verified in Python renders before coding. Exported for the node
- * tests. */
+ * triangle's longest edge is < 0.4).
+ * fix134: the 0.36 threshold missed the borderline fins — 14 thin
+ * triangles with maxR 0.34..0.36 (wheelR#0a0a0a ×10, wheelR#303030
+ * ×4, plus 1 maxEdge fin) that sit just outside the tyre surface
+ * (tyre maxR ≤ 0.33, clean gap to 0.35) and read as a black sail
+ * above the rear tyre in the side view (verified in a Python render
+ * with the borderline tris highlighted). Tightened to 0.34: drops
+ * 38 of 361 wheel tris (was 23). Exported for the node tests. */
 export function kart7WheelFinTri(g: TriGeom): boolean {
-    return g.maxR > 0.36 || g.maxEdge >= 0.45;
+    return g.maxR > 0.34 || g.maxEdge >= 0.45;
 }
 
 /** bytes -> base64 (inverse of b64ToBytes, same alphabet; used when a
@@ -257,6 +275,7 @@ function forEachTri(b: KartModelBucket, fn: (g: TriGeom, a: number, c: number, d
         fn({
             cx: (x0 + x1 + x2) / 3, cy: (y0 + y1 + y2) / 3, cz: (z0 + z1 + z2) / 3,
             maxVy: Math.max(y0, y1, y2),
+            minVx: Math.min(Math.abs(x0), Math.abs(x1), Math.abs(x2)),
             maxR: Math.max(Math.sqrt(y0 * y0 + z0 * z0), Math.sqrt(y1 * y1 + z1 * z1), Math.sqrt(y2 * y2 + z2 * z2)),
             maxEdge: Math.max(edge(x0, y0, z0, x1, y1, z1), edge(x1, y1, z1, x2, y2, z2), edge(x2, y2, z2, x0, y0, z0)),
         }, a, c, d);
@@ -398,8 +417,11 @@ function shadowMesh(radius: number): any {
 function buildDriver(body: Node, seat: number[], steer: number[], accent: number): void {
     const sx = seat[0], sy = seat[1], sz = seat[2];
     const tx = steer[0], ty = steer[1], tz = steer[2];
-    const suitHex = 0x3d4454; // slate grey — the old near-black suit was
-    // invisible in the cockpit shadow from the chase cam
+    const suitHex = 0x6b7280; // medium slate — fix134: the old near-black
+    // suit (0x3d4454) was invisible in the cockpit shadow from the chase
+    // cam and read as the big black mass behind kart 0's driver. The
+    // suit is unlit, so it renders at its own colour regardless of the
+    // lights; brightening it to medium slate fixes the black mass.
     const suitMat = MeshBuilder.unlitMaterial(suitHex);
     // torso + visor + gloves: one merged unlit mesh (the suit reads flat;
     // the glossy part is the helmet, built separately)
@@ -419,7 +441,7 @@ function buildDriver(body: Node, seat: number[], steer: number[], accent: number
         minPos: new Vec3(-0.13, -0.13, -0.13),
         maxPos: new Vec3(0.13, 0.13, 0.13),
     });
-    const helm = addMeshNode(body, 'helmet', helmMesh, standardMaterial(helmetHex, 0.15, 0.12));
+    const helm = addMeshNode(body, 'helmet', helmMesh, standardMaterial(helmetHex, 0.15, 0.08));
     helm.setPosition(sx, sy + 0.40, sz + 0.02);
     // arms: thin cylinders aimed shoulder -> glove (Euler YXZ: pitch =
     // acos(dy/len), yaw = atan2(dx, dz); see Quat.fromEuler order)
@@ -504,7 +526,7 @@ function primNode(parent: Node, name: string, prim: any, mat: Material, x: numbe
  * on an extended rear deck (its baked wing was filtered out). */
 function buildBodywork(body: Node, ki: number, colour: number): void {
     if (ki !== 3 && ki !== 7) { return; }
-    const paint = standardMaterial(colour, 0.15, 0.12, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
+    const paint = standardMaterial(colour, 0.15, 0.08, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
     const box = (name: string, cx: number, cy: number, cz: number, w: number, h: number, d: number): void => {
         primNode(body, name, primitives.box({ width: w, height: h, length: d }), paint, cx, cy, cz);
     };
@@ -530,14 +552,14 @@ function buildBodywork(body: Node, ki: number, colour: number): void {
 /** fix132 kart 5 橙光: the baked buggy body is rebuilt from scratch in
  * code — a dune buggy with a clean silhouette: floor pan, sloped hood,
  * cockpit tub, rear deck + dark engine cover, a roll cage that clears
- * the helmet (top y 0.88 vs helmet top 0.85), fender domes over all four
- * wheels, a front bumper bar, headlights and a brake light. All body
- * parts use the kart/paint colour so paints still recolour the buggy;
- * the engine cover, cage and bumper stay dark. Wheel centres (baked):
- * front z ~0.92..0.96, rear z ~-0.43..-0.46; seat (0, 0.32, -0.25),
- * steering (0, 0.52, 0.1). */
+ * the helmet (top y 0.88 vs helmet top 0.85), thin fender caps over
+ * all four wheels, a front bumper bar, headlights and a brake light.
+ * All body parts use the kart/paint colour so paints still recolour
+ * the buggy; the engine cover, cage and bumper stay dark. Wheel
+ * centres (baked): front z ~0.92..0.96, rear z ~-0.43..-0.46; seat
+ * (0, 0.32, -0.25), steering (0, 0.52, 0.1). */
 function buildBuggyBody(body: Node, colour: number): void {
-    const paint = standardMaterial(colour, 0.15, 0.12, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
+    const paint = standardMaterial(colour, 0.15, 0.08, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
     const dark = standardMaterial(0x1a1d24, 0.15, 0.35);
     const box = (name: string, mat: Material, cx: number, cy: number, cz: number, w: number, h: number, d: number, rx: number = 0): void => {
         primNode(body, name, primitives.box({ width: w, height: h, length: d }), mat, cx, cy, cz, rx, 0, 0);
@@ -564,12 +586,19 @@ function buildBuggyBody(body: Node, colour: number): void {
     };
     hoop(-0.05, 'front');
     hoop(-0.48, 'rear');
-    // fender domes over the four wheels (baked centres)
+    // fix134: thin fender caps over the four wheels (baked centres).
+    // The old domes (sphere 0.30, y-scale 0.55, centre y 0.30) were
+    // bigger than the wheels in every direction and hid them entirely
+    // (drive130 fifth re-run 49z-kart5-*). A shallow cap (sphere 0.32,
+    // y-scale 0.25, centre y 0.60) sits just over the tyre top (front
+    // 0.55 / rear 0.58-0.61, measured from the baked wheel buckets) so
+    // the wheel shows below y 0.52. Verified in a Python render
+    // (rear/side/front) before coding.
     const wheels: Array<[number, number]> = [[0.355, 0.92], [-0.328, 0.959], [0.401, -0.463], [-0.405, -0.428]];
     for (let i = 0; i < wheels.length; i++) {
         primNode(body, 'fender_' + i,
-            primitives.sphere(0.30, { segments: 12 }),
-            paint, wheels[i][0], 0.30, wheels[i][1], 0, 0, 0, 1, 0.55, 1.15);
+            primitives.sphere(0.32, { segments: 12 }),
+            paint, wheels[i][0], 0.60, wheels[i][1], 0, 0, 0, 0.9, 0.25, 1.0);
     }
     // front bumper bar + headlights + brake light (unlit: they must glow)
     primNode(body, 'buggy_bumper',
