@@ -171,8 +171,8 @@ const TRACK_SUNSET: TrackDef = {
         { t0: 0.9575, t1: 0.9740, lat: -3.1, hw: 2.2 },
         { t0: 0.9575, t1: 0.9740, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x40434e,
-    roadAlt: 0x464a56,
+    road: 0x585d6c,
+    roadAlt: 0x5e636f,
     shoulder: 0x2e3138,
     curbA: 0xe63946,
     curbB: 0xf5f0e6,
@@ -266,8 +266,8 @@ const TRACK_CANYON: TrackDef = {
         { t0: 0.9050, t1: 0.9220, lat: -3.1, hw: 2.2 },
         { t0: 0.9050, t1: 0.9220, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x4a3a30,
-    roadAlt: 0x524138,
+    road: 0x5f4a3a,
+    roadAlt: 0x66503f,
     shoulder: 0x3a2d24,
     curbA: 0xd94f30,
     curbB: 0xf5ead6,
@@ -1353,14 +1353,22 @@ export class KartTrack {
         }
         this.posAt(0, 0, pos);
         sb.addBox(0x33507e, new Vec3(pos.x, pos.y + 6.5, pos.z), gyaw, f.half * 2 + 2.2, 1.4, 0.5, 0.6, 0.35);
-        // checkered start strip under the beam (replaces the old yellow bar)
+        // fix132: the checkered start strip under the beam was 8 unlit
+        // pure-black / pure-white boxes floating under the navy beam — it
+        // read as a flat glitch bar from the grid. Rebuilt as PBR
+        // (softer tones, roughness 0.6) on a navy backing board, so it
+        // reads as a designed sign under the beam. The checkered finish
+        // line ON the road stays unlit — it reads as road paint.
+        sb.addBox(0x33507e,
+            new Vec3(pos.x + f.tangent.x * 0.35, pos.y + 5.85, pos.z + f.tangent.z * 0.35),
+            gyaw, f.half * 2 + 2.2, 1.1, 0.12, 0.6, 0.35);
         const stripW = f.half * 2 + 2.2;
         const segW = stripW / 8;
         for (let i = 0; i < 8; i++) {
             const lat = -stripW / 2 + segW * (i + 0.5);
             this.posAt(0, lat, pos);
-            b.addBox(i % 2 === 0 ? 0x111111 : 0xffffff,
-                new Vec3(pos.x, pos.y + 5.85, pos.z), gyaw, segW, 0.5, 0.6);
+            sb.addBox(i % 2 === 0 ? 0x232323 : 0xd8d8d8,
+                new Vec3(pos.x, pos.y + 5.85, pos.z), gyaw, segW, 0.5, 0.6, 0, 0.6);
         }
         // checkered finish line ON the road under the gantry: two rows of
         // squares following the crown (lift falls to 0 at the road edge).
