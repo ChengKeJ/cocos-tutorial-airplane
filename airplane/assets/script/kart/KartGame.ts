@@ -14,9 +14,9 @@
  * KartUI (on the Canvas) drives input + HUD and sets game.ui = itself.
  */
 
-import { _decorator, Camera, Component, Node, Quat, Vec3, director, find, sys } from 'cc';
+import { _decorator, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
 import { ItemKind, KartConstants, ROSTER } from './KartConstants';
-import { KartTrack, TrackFrame } from './KartTrack';
+import { KartTrack, MeshBuilder, TrackFrame } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
 import { KartItems } from './KartItems';
 import { aiSkillOf, computeRubberBand, hash01 } from './KartItemsLogic';
@@ -27,6 +27,17 @@ const BEST_TIME_KEY_REV = 'kart_best_time_rev'; // 逆向 best
 const MODE_KEY = 'kart_mode'; // 'fwd' | 'rev', last chosen race direction
 const KART_VERSION = 'v1.0.8';
 const RAD2DEG = 180 / Math.PI;
+
+// Pass A (production feel): the old chase cam sat 11 m back / 4.2 m up, so
+// the kart read tiny and the road was a thin band with empty sky below.
+// Closer + lower + a stronger speed FOV kick fills the frame.
+const CAM_BACK = 7.5; // metres behind the kart (was 11)
+const CAM_UP = 2.9; // metres above the road (was 4.2)
+const CAM_LOOK = 4.5; // metres ahead to look at (was 6)
+const CAM_LOOK_Y = 0.9;
+const FOV_BASE = 62; // was 60
+const FOV_KICK = 14; // + at top speed (was 8)
+const SMOKE_POOL = 40;
 
 interface KartState {
     model: KartModel;
@@ -68,6 +79,8 @@ interface KartState {
     aiBand: number; // rubber-band target-speed multiplier (AI only)
     aiAssist: number; // rubber-band longitudinal accel, m/s^2 (AI only)
     wheelSpin: number;
+    flame: Node; // boost flame cone (child of the kart root, on while boosting)
+    smokeAcc: number; // drift-smoke spawn accumulator (seconds)
 }
 
 @ccclass('KartGame')
@@ -110,6 +123,11 @@ export class KartGame extends Component {
         pos: new Vec3(), tangent: new Vec3(), right: new Vec3(), up: new Vec3(),
         half: 0, bank: 0, zone: 0, raceLat: 0,
     };
+    // ---- Pass A feel FX ----
+    private _smoke: Array<{ node: Node; life: number; maxLife: number }> = [];
+    private _smokePos = new Vec3();
+    private _shakeAmp = 0;
+    private _lastCollideShake = -10;
 
     // ---- public state for the UI ----
     public get raceTime(): number { return this._raceTime; }
@@ -157,6 +175,17 @@ export class KartGame extends Component {
             const stats = ROSTER[i];
             const model = buildKartModel(stats.color, stats.dark);
             model.root.setParent(kartsRoot);
+            // boost flame: orange cone + yellow core, tip pointing backwards
+            // (-Z). Built once per kart, toggled while boostTime > 0.
+            const flame = new Node('flame');
+            flame.layer = Layers.Enum.DEFAULT;
+            flame.setParent(model.root);
+            flame.setPosition(0, 0.55, -1.15);
+            const fb = new MeshBuilder();
+            fb.addCone(0xff7a1a, new Vec3(0, 0, 0), 0, 0.34, 1.1, 8, -Math.PI / 2);
+            fb.addCone(0xffd23f, new Vec3(0, 0, 0.18), 0, 0.2, 0.7, 8, -Math.PI / 2);
+            fb.build(flame);
+            flame.active = false;
             const pos = new Vec3();
             const yaw = this._track.gridSlot(i, pos);
             model.root.setPosition(pos.x, pos.y, pos.z);
@@ -180,9 +209,30 @@ export class KartGame extends Component {
                 aiSkill: skill, aiAggression: 0.5 + skill * 0.5,
                 aiItemDelay: 0, aiHoldT: 0, aiBand: 1, aiAssist: 0,
                 wheelSpin: 0,
+                flame, smokeAcc: 0,
             };
             this._karts.push(ks);
             if (i === 0) { this._player = ks; }
+        }
+
+        // drift-smoke pool: shared sphere mesh + one grey material, nodes
+        // reused so a race never allocates mid-frame.
+        const smokePrim = primitives.sphere(0.5, { segments: 8 });
+        const smokeMesh = utils.MeshUtils.createMesh({
+            positions: smokePrim.positions, normals: smokePrim.normals,
+            uvs: smokePrim.uvs, indices: smokePrim.indices,
+            minPos: new Vec3(-0.5, -0.5, -0.5), maxPos: new Vec3(0.5, 0.5, 0.5),
+        });
+        const smokeMat = MeshBuilder.unlitMaterial(0xcfd4d8);
+        for (let i = 0; i < SMOKE_POOL; i++) {
+            const node = new Node('smoke');
+            node.layer = Layers.Enum.DEFAULT;
+            node.setParent(this.node);
+            const r = node.addComponent(ModelComponent);
+            r.mesh = smokeMesh;
+            r.setMaterial(smokeMat, 0);
+            node.active = false;
+            this._smoke.push({ node, life: 0, maxLife: 0.7 });
         }
 
         this._items = new KartItems(this._track, this.node);
@@ -461,10 +511,12 @@ export class KartGame extends Component {
             }
             k.driftTime += dt;
             if (k.driftTime > KartConstants.DRIFT_MAX_HOLD) {
-                this._releaseDrift(k);
+                const tier = this._releaseDrift(k);
+                if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); }
             }
         } else if (k.driftTime > 0) {
-            this._releaseDrift(k);
+            const tier = this._releaseDrift(k);
+            if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); }
         }
 
         // speed
@@ -518,7 +570,7 @@ export class KartGame extends Component {
         this._moveKart(k, dt);
     }
 
-    private _releaseDrift(k: KartState) {
+    private _releaseDrift(k: KartState): number {
         const t = k.driftTime;
         k.driftTime = 0;
         let tier = 0;
@@ -529,6 +581,7 @@ export class KartGame extends Component {
             k.boostTime = KartConstants.DRIFT_BOOST_TIME[tier];
             k.boostMul = KartConstants.DRIFT_BOOST_STRENGTH[tier];
         }
+        return tier;
     }
 
     private _moveKart(k: KartState, dt: number) {
@@ -602,6 +655,7 @@ export class KartGame extends Component {
             k.boostTime = KartConstants.PAD_BOOST_TIME;
             k.boostMul = KartConstants.PAD_BOOST_MUL;
             k.padCooldown = 2;
+            if (isPlayer) { this.addShake(0.06); }
         }
     }
 
@@ -619,6 +673,11 @@ export class KartGame extends Component {
                     const avg = (a.speed + b.speed) / 2;
                     a.speed = avg * 0.98;
                     b.speed = avg * 0.98;
+                    // bump shake (player only, at most once per 0.5 s)
+                    if ((a.isPlayer || b.isPlayer) && this._raceTime - this._lastCollideShake > 0.5) {
+                        this._lastCollideShake = this._raceTime;
+                        this.addShake(0.12);
+                    }
                 }
             }
         }
@@ -651,6 +710,54 @@ export class KartGame extends Component {
             // body lean: into the drift, out of the turn otherwise
             const lean = k.driftTime > 0 ? -k.driftDir * 8 : -k.steer * 4;
             k.model.body.eulerAngles = new Vec3(0, 0, lean);
+            // boost flame: on while boosting, flickers
+            const boosting = k.boostTime > 0 && !k.finished;
+            k.flame.active = boosting;
+            if (boosting) {
+                const f = 0.85 + 0.3 * Math.sin(this._raceTime * 43 + k.sTotal * 0.1);
+                k.flame.setScale(f, f, 0.8 + 0.5 * Math.random());
+            }
+            // drift smoke: rear-wheel puffs while drifting (nearby karts only)
+            if (k.driftTime > 0 && Math.abs(k.sTotal - this._player.sTotal) < 90) {
+                k.smokeAcc += dt;
+                while (k.smokeAcc >= 0.05) {
+                    k.smokeAcc -= 0.05;
+                    const side = Math.random() < 0.5 ? -0.85 : 0.85;
+                    this._track.posAt(k.sTotal - 1.1, k.d + side, this._smokePos);
+                    this._spawnSmoke(this._smokePos.x, this._smokePos.y + 0.25, this._smokePos.z);
+                }
+            }
+        }
+        this._updateSmoke(dt);
+    }
+
+    /** Camera shake: amp in metres, decays in _updateCamera. */
+    public addShake(amp: number): void {
+        if (amp > this._shakeAmp) { this._shakeAmp = amp; }
+    }
+
+    private _spawnSmoke(x: number, y: number, z: number): void {
+        for (const s of this._smoke) {
+            if (s.node.active) { continue; }
+            s.node.active = true;
+            s.node.setPosition(x, y, z);
+            s.life = s.maxLife = 0.55 + Math.random() * 0.25;
+            s.node.setScale(0.35, 0.35, 0.35);
+            return;
+        }
+    }
+
+    private _updateSmoke(dt: number): void {
+        for (const s of this._smoke) {
+            if (!s.node.active) { continue; }
+            s.life -= dt;
+            if (s.life <= 0) { s.node.active = false; continue; }
+            const t = 1 - s.life / s.maxLife; // 0..1 grown
+            const grow = 0.35 + t * 1.1;
+            const end = s.life < 0.18 ? Math.max(0.05, s.life / 0.18) : 1;
+            s.node.setScale(grow * end, grow * end, grow * end);
+            const p = s.node.position;
+            s.node.setPosition(p.x, p.y + dt * 0.9, p.z);
         }
     }
 
@@ -661,8 +768,8 @@ export class KartGame extends Component {
         this._track.posAt(s, this._player.d, this._tmpPos);
         const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
         const fx = Math.sin(yaw), fz = Math.cos(yaw);
-        this._camPos.set(this._tmpPos.x - fx * 11, this._tmpPos.y + 4.2, this._tmpPos.z - fz * 11);
-        this._camLook.set(this._tmpPos.x + fx * 6, this._tmpPos.y + 1.0, this._tmpPos.z + fz * 6);
+        this._camPos.set(this._tmpPos.x - fx * CAM_BACK, this._tmpPos.y + CAM_UP, this._tmpPos.z - fz * CAM_BACK);
+        this._camLook.set(this._tmpPos.x + fx * CAM_LOOK, this._tmpPos.y + CAM_LOOK_Y, this._tmpPos.z + fz * CAM_LOOK);
         this._camera.setPosition(this._camPos);
         this._camera.lookAt(this._camLook, new Vec3(0, 1, 0));
         this._camInit = true;
@@ -676,12 +783,12 @@ export class KartGame extends Component {
         const yaw = Math.atan2(frame.tangent.x, frame.tangent.z) - this._player.heading * 0.5;
         const fx = Math.sin(yaw), fz = Math.cos(yaw);
         const sway = menu ? Math.sin(this._menuT * 0.15) * 6 : 0;
-        const tx = this._tmpPos.x - fx * 11 + sway;
-        const ty = this._tmpPos.y + 4.2;
-        const tz = this._tmpPos.z - fz * 11;
-        const lx = this._tmpPos.x + fx * 6;
-        const ly = this._tmpPos.y + 1.0;
-        const lz = this._tmpPos.z + fz * 6;
+        const tx = this._tmpPos.x - fx * CAM_BACK + sway;
+        const ty = this._tmpPos.y + CAM_UP;
+        const tz = this._tmpPos.z - fz * CAM_BACK;
+        const lx = this._tmpPos.x + fx * CAM_LOOK;
+        const ly = this._tmpPos.y + CAM_LOOK_Y;
+        const lz = this._tmpPos.z + fz * CAM_LOOK;
         if (!this._camInit) {
             this._camPos.set(tx, ty, tz);
             this._camLook.set(lx, ly, lz);
@@ -696,11 +803,18 @@ export class KartGame extends Component {
             this._camLook.y += (ly - this._camLook.y) * kl;
             this._camLook.z += (lz - this._camLook.z) * kl;
         }
+        // shake: random offset that decays (boost / collision kicks)
+        if (this._shakeAmp > 0.001) {
+            this._camPos.x += (Math.random() - 0.5) * this._shakeAmp;
+            this._camPos.y += (Math.random() - 0.5) * this._shakeAmp;
+            this._camPos.z += (Math.random() - 0.5) * this._shakeAmp;
+            this._shakeAmp = Math.max(0, this._shakeAmp - dt * 0.5);
+        }
         this._camera.setPosition(this._camPos);
         this._camera.lookAt(this._camLook, new Vec3(0, 1, 0));
         if (this._cameraComp) {
             const spdRatio = Math.min(1, Math.max(0, this._player.speed / KartConstants.BASE_TOP_SPEED));
-            (this._cameraComp as any).fov = 60 + spdRatio * 8;
+            (this._cameraComp as any).fov = FOV_BASE + spdRatio * FOV_KICK;
         }
     }
 }
