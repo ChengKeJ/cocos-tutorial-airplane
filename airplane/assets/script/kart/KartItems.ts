@@ -107,6 +107,11 @@ export class KartItems {
     private _tmpPos = new Vec3();
     private _tmpQ = new Quat();
 
+    /** Sound hooks (set by KartGame; player-only filtering happens there). */
+    public onPickup: ((k: ItemKart) => void) | null = null;
+    public onUse: ((k: ItemKart) => void) | null = null;
+    public onSpinOut: ((k: ItemKart) => void) | null = null;
+
     constructor(track: KartTrack, parent: Node) {
         this._track = track;
         this._root = new Node('items');
@@ -205,6 +210,7 @@ export class KartItems {
             k.itemArm = 0.22;
         }
         k.aiHoldT = 0;
+        if (this.onUse) { this.onUse(k); }
         return true;
     }
 
@@ -387,6 +393,7 @@ export class KartItems {
         if (!k.isPlayer) {
             k.aiItemDelay = aiItemDelay(k.aiSkill, karts.indexOf(k), kind);
         }
+        if (this.onPickup) { this.onPickup(k); }
     }
 
     private _updateShells(dt: number, karts: ItemKart[], raceTime: number, L: number): void {
@@ -495,5 +502,6 @@ export class KartItems {
         k.spinYaw = 0;
         // a spin-out drops any drift charge
         k.driftTime = 0;
+        if (this.onSpinOut) { this.onSpinOut(k); }
     }
 }
