@@ -15,7 +15,7 @@
  */
 
 import { _decorator, AudioClip, AudioSource, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
-import { ItemKind, KartConstants, ROSTER } from './KartConstants';
+import { ItemKind, KartConstants, ROSTER, rosterOrder } from './KartConstants';
 import { KartTrack, MeshBuilder, TrackFrame, trackDefById } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
 import { KartItems } from './KartItems';
@@ -26,6 +26,7 @@ const BEST_TIME_KEY = 'kart_best_time'; // 正赛 best (existing key, kept)
 const BEST_TIME_KEY_REV = 'kart_best_time_rev'; // 逆向 best
 const MODE_KEY = 'kart_mode'; // 'fwd' | 'rev', last chosen race direction
 const TRACK_KEY = 'kart_track'; // selected track id ('sunset' | 'canyon')
+const KART_KEY = 'kart_selected'; // selected roster index 0..7 (NEW key)
 const KART_VERSION = 'v1.0.9';
 const RAD2DEG = 180 / Math.PI;
 
@@ -123,6 +124,8 @@ export class KartGame extends Component {
     private _trackId = 'sunset';
     private _trackRoot: Node = null;
     private _karts: KartState[] = [];
+    private _kartsRoot: Node = null;
+    private _kartIdx = 0; // selected roster index (player's pick)
     private _player: KartState = null;
     private _items: KartItems = null;
     private _camera: Node = null;
@@ -196,6 +199,88 @@ export class KartGame extends Component {
         this._bestTime = saved ? parseInt(saved, 10) || 0 : 0;
     }
 
+    /** Selected roster index (the player's kart). */
+    public get selectedKart(): number { return this._kartIdx; }
+
+    /** Pick a kart from the menu (persisted). Rebuilds all kart models
+     * so the player drives the new pick and no AI duplicates it. The
+     * menu re-hides the player kart after this (see KartUI._selectKart).
+     * Menu-only: races never call it mid-race. */
+    public selectKart(index: number): void {
+        if (this._karts.length === 0) { return; }
+        const idx = (index >= 0 && index < ROSTER.length) ? index : 0;
+        if (idx === this._kartIdx) { return; }
+        this._kartIdx = idx;
+        sys.localStorage.setItem(KART_KEY, String(idx));
+        this._rebuildKarts();
+    }
+
+    /** Saved kart pick (0..7), default 凌风. Garbage in storage falls back to 0. */
+    private _loadKartIdx(): number {
+        const raw = sys.localStorage.getItem(KART_KEY);
+        const n = raw ? parseInt(raw, 10) : 0;
+        return (n >= 0 && n < ROSTER.length) ? n : 0;
+    }
+
+    /** Destroy all kart models and rebuild them in the new grid order
+     * (player's pick first, then the rest in roster order). */
+    private _rebuildKarts(): void {
+        for (const k of this._karts) { k.model.root.destroy(); }
+        this._karts = [];
+        this._player = null;
+        const order = rosterOrder(this._kartIdx);
+        for (let i = 0; i < KartConstants.RACER_COUNT; i++) {
+            const ks = this._makeKart(i, ROSTER[order[i]]);
+            this._karts.push(ks);
+            if (i === 0) { this._player = ks; }
+        }
+        this._snapCameraToPlayer();
+    }
+
+    /** Build one kart entry (model + flame + grid placement + state).
+     * Used by start() and by _rebuildKarts() after a selection change. */
+    private _makeKart(i: number, stats: typeof ROSTER[0]): KartState {
+        const model = buildKartModel(stats);
+        model.root.setParent(this._kartsRoot);
+        // boost flame: orange cone + yellow core, tip pointing backwards
+        // (-Z). Built once per kart, toggled while boostTime > 0.
+        const flame = new Node('flame');
+        flame.layer = Layers.Enum.DEFAULT;
+        flame.setParent(model.root);
+        flame.setPosition(0, 0.55, -1.15);
+        const fb = new MeshBuilder();
+        fb.addCone(0xff7a1a, new Vec3(0, 0, 0), 0, 0.34, 1.1, 8, -Math.PI / 2);
+        fb.addCone(0xffd23f, new Vec3(0, 0, 0.18), 0, 0.2, 0.7, 8, -Math.PI / 2);
+        fb.build(flame);
+        flame.active = false;
+        const pos = new Vec3();
+        const yaw = this._track.gridSlot(i, pos);
+        model.root.setPosition(pos.x, pos.y, pos.z);
+        const q = new Quat();
+        Quat.fromEuler(q, 0, yaw * RAD2DEG, 0);
+        model.root.setRotation(q);
+        const back = 11 + (i >> 1) * 8 + (i & 1) * 4;
+        const skill = aiSkillOf(stats.handlingMul, hash01(i * 7 + 3));
+        const ks: KartState = {
+            model, stats, isPlayer: i === 0,
+            sTotal: -back, d: (i & 1) === 0 ? -3.2 : 3.2, heading: 0, speed: 0,
+            steer: 0, driftTime: 0, driftDir: 0,
+            boostTime: 0, boostMul: 1, spinTime: 0, spinYaw: 0,
+            lap: 1, lapStartT: 0, bestLap: 0,
+            finished: false, finishTime: 0,
+            offroad: false, oobTime: 0, padCooldown: 0,
+            maxSTotal: -back, wrongWayT: 0,
+            aiWobble: i * 1.7, aiDrift: 0, aiDriftDir: 0,
+            itemKind: ItemKind.NONE, itemCount: 0, itemArm: 0,
+            starTime: 0, starHitT: 0,
+            aiSkill: skill, aiAggression: 0.5 + skill * 0.5,
+            aiItemDelay: 0, aiHoldT: 0, aiBand: 1, aiAssist: 0,
+            wheelSpin: 0,
+            flame, smokeAcc: 0,
+        };
+        return ks;
+    }
+
     /** Destroy the old track world and build the selected one. */
     private _rebuildTrack(): void {
         if (this._trackRoot) { this._trackRoot.destroy(); this._trackRoot = null; }
@@ -239,46 +324,13 @@ export class KartGame extends Component {
 
         const kartsRoot = new Node('karts');
         kartsRoot.setParent(this.node);
+        this._kartsRoot = kartsRoot;
+        // grid order: the saved pick drives karts[0] (the player), the
+        // other 7 follow in roster order — no AI duplicates the pick.
+        this._kartIdx = this._loadKartIdx();
+        const order = rosterOrder(this._kartIdx);
         for (let i = 0; i < KartConstants.RACER_COUNT; i++) {
-            const stats = ROSTER[i];
-            const model = buildKartModel(stats.color, stats.dark);
-            model.root.setParent(kartsRoot);
-            // boost flame: orange cone + yellow core, tip pointing backwards
-            // (-Z). Built once per kart, toggled while boostTime > 0.
-            const flame = new Node('flame');
-            flame.layer = Layers.Enum.DEFAULT;
-            flame.setParent(model.root);
-            flame.setPosition(0, 0.55, -1.15);
-            const fb = new MeshBuilder();
-            fb.addCone(0xff7a1a, new Vec3(0, 0, 0), 0, 0.34, 1.1, 8, -Math.PI / 2);
-            fb.addCone(0xffd23f, new Vec3(0, 0, 0.18), 0, 0.2, 0.7, 8, -Math.PI / 2);
-            fb.build(flame);
-            flame.active = false;
-            const pos = new Vec3();
-            const yaw = this._track.gridSlot(i, pos);
-            model.root.setPosition(pos.x, pos.y, pos.z);
-            const q = new Quat();
-            Quat.fromEuler(q, 0, yaw * RAD2DEG, 0);
-            model.root.setRotation(q);
-            const back = 11 + (i >> 1) * 8 + (i & 1) * 4;
-            const skill = aiSkillOf(stats.handlingMul, hash01(i * 7 + 3));
-            const ks: KartState = {
-                model, stats, isPlayer: i === 0,
-                sTotal: -back, d: (i & 1) === 0 ? -3.2 : 3.2, heading: 0, speed: 0,
-                steer: 0, driftTime: 0, driftDir: 0,
-                boostTime: 0, boostMul: 1, spinTime: 0, spinYaw: 0,
-                lap: 1, lapStartT: 0, bestLap: 0,
-                finished: false, finishTime: 0,
-                offroad: false, oobTime: 0, padCooldown: 0,
-                maxSTotal: -back, wrongWayT: 0,
-                aiWobble: i * 1.7, aiDrift: 0, aiDriftDir: 0,
-                itemKind: ItemKind.NONE, itemCount: 0, itemArm: 0,
-                starTime: 0, starHitT: 0,
-                aiSkill: skill, aiAggression: 0.5 + skill * 0.5,
-                aiItemDelay: 0, aiHoldT: 0, aiBand: 1, aiAssist: 0,
-                wheelSpin: 0,
-                flame, smokeAcc: 0,
-            };
+            const ks = this._makeKart(i, ROSTER[order[i]]);
             this._karts.push(ks);
             if (i === 0) { this._player = ks; }
         }
@@ -609,13 +661,15 @@ export class KartGame extends Component {
         const maxStep = steerRate * dt;
         k.steer += Math.max(-maxStep, Math.min(maxStep, dSteer));
 
-        // drift engage / hold / release
+        // drift engage / hold / release — charge rate scales with the
+        // kart's drift stat (driftMul 0.90..1.10), so the visible drift
+        // stat changes how fast a mini-turbo builds, not just the turn.
         if (wantDrift && Math.abs(k.steer) > KartConstants.DRIFT_ENGAGE_STEER && k.speed > KartConstants.DRIFT_MIN_SPEED) {
             if (k.driftTime <= 0) {
                 k.driftTime = 0.001;
                 k.driftDir = k.steer > 0 ? 1 : -1;
             }
-            k.driftTime += dt;
+            k.driftTime += dt * stats.driftMul;
             if (k.driftTime > KartConstants.DRIFT_MAX_HOLD) {
                 const tier = this._releaseDrift(k);
                 if (isPlayer && tier >= 2) { this.addShake(0.07 + tier * 0.02); this._playSfx(this.screechClip); }
