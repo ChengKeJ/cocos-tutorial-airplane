@@ -27,6 +27,7 @@
  */
 
 import { Layers, Material, ModelComponent, Node, Quat, Vec3, Color, primitives, utils } from 'cc';
+import { stdMaterial } from './KartMaterials';
 
 // ---------------------------------------------------------------------------
 // Layout tables (spec: src/world/TrackLayout.ts)
@@ -1598,39 +1599,12 @@ function shade(hex: number, f: number): number {
     return (r << 16) | (g << 8) | b;
 }
 
-const _stdMats = new Map<string, Material>();
-
-function stdMaterial(hex: number, metallic: number, roughness: number, emissiveHex: number): Material {
-    const key = hex.toString(16) + '_' + metallic + '_' + roughness + '_' + emissiveHex.toString(16);
-    let mat = _stdMats.get(key);
-    if (!mat) {
-        mat = new Material();
-        mat.initialize({ effectName: 'builtin-standard' });
-        // drive130: a builtin effect only ships in the build when a
-        // project asset references it. assets/resources/
-        // kart-std-anchor.mtl references builtin-standard so it is
-        // bundled; but if it still did not resolve (null effect /
-        // zero passes), fall back to builtin-unlit instead of
-        // crashing the whole game at the first setMaterial().
-        const passes = (mat as any).passes as any[];
-        const resolved = (mat as any).effectAsset || (passes && passes.length > 0);
-        const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff;
-        if (!resolved) {
-            mat.initialize({ effectName: 'builtin-unlit' });
-            mat.setProperty('mainColor', new Color(r, g, b, 255));
-            _stdMats.set(key, mat);
-            return mat;
-        }
-        mat.setProperty('mainColor', new Color(r, g, b, 255));
-        mat.setProperty('metallic', metallic);
-        mat.setProperty('roughness', roughness);
-        if (emissiveHex !== 0) {
-            mat.setProperty('emissive', new Color((emissiveHex >> 16) & 0xff, (emissiveHex >> 8) & 0xff, emissiveHex & 0xff, 255));
-        }
-        _stdMats.set(key, mat);
-    }
-    return mat;
-}
+// stdMaterial lives in KartMaterials.ts (shared with KartModel): it
+// creates materials from the RUNTIME-LOADED anchor effect
+// (resources.load kart-std-anchor), never from
+// initialize({ effectName: 'builtin-standard' }) — the name lookup does
+// not resolve at runtime and produced null-effect materials that
+// half-initialised SubModels and bricked scene teardown (drive130).
 
 interface StdBucket {
     positions: number[];
