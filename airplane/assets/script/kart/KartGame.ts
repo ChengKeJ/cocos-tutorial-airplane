@@ -335,24 +335,27 @@ export class KartGame extends Component {
     private _makeKart(i: number, stats: typeof ROSTER[0]): KartState {
         const model = buildKartModel(stats, i === 0 ? this._paintFor(this._kartIdx) : null);
         model.root.setParent(this._kartsRoot);
-        // boost flame: 6-layer cone (deep red-orange -> orange -> amber
-        // -> gold -> pale yellow -> white-hot core), tip pointing
-        // backwards (-Z). Built once per kart, toggled while boostTime >
-        // 0; the flicker in _updateVisuals scales it up with the boost
-        // tier, so a tier-3 mini-turbo / pad boost reads bigger than a
-        // tier-1. Six thin layers + 12 segments keep the gradient smooth
-        // instead of flat orange polygons.
+        // boost flame: 6 flat discs (short cylinders, axis along Z) in a
+        // red -> white gradient, radii shrinking 0.30 -> 0.07 and spaced
+        // 0.12 m apart along the kart's length. fix132: the old 6 nested
+        // CONES all faced the chase cam base-on, so the outer cone hid
+        // the 5 inner layers and the flame read as one big solid orange
+        // ball. Discs read as concentric flame rings from behind (the
+        // chase view) and as a short tapered tongue from the side; the
+        // flicker in _updateVisuals still stretches/scales the node.
         const flame = new Node('flame');
         flame.layer = Layers.Enum.DEFAULT;
         flame.setParent(model.root);
-        flame.setPosition(0, 0.55, -1.15);
+        flame.setPosition(0, 0.34, -0.98);
         const fb = new MeshBuilder();
-        fb.addCone(0xff4d00, new Vec3(0, 0, 0), 0, 0.44, 1.5, 12, -Math.PI / 2);
-        fb.addCone(0xff7a1a, new Vec3(0, 0, 0.08), 0, 0.38, 1.32, 12, -Math.PI / 2);
-        fb.addCone(0xffa31a, new Vec3(0, 0, 0.16), 0, 0.30, 1.12, 12, -Math.PI / 2);
-        fb.addCone(0xffc21a, new Vec3(0, 0, 0.24), 0, 0.22, 0.9, 12, -Math.PI / 2);
-        fb.addCone(0xffd23f, new Vec3(0, 0, 0.30), 0, 0.15, 0.66, 12, -Math.PI / 2);
-        fb.addCone(0xfff6c9, new Vec3(0, 0, 0.36), 0, 0.08, 0.42, 12, -Math.PI / 2);
+        const FLAME_DISCS: Array<[number, number, number]> = [
+            [0xff4d00, 0.30, 0], [0xff7a1a, 0.26, -0.12], [0xffa31a, 0.21, -0.24],
+            [0xffc21a, 0.16, -0.36], [0xffd23f, 0.11, -0.48], [0xfff6c9, 0.07, -0.60],
+        ];
+        for (const [hex, r, z] of FLAME_DISCS) {
+            fb.addPrimitive(hex, primitives.cylinder(r, r, 0.10, { radialSegments: 12 }),
+                new Vec3(0, 0, z), 0, new Vec3(1, 1, 1), Math.PI / 2);
+        }
         fb.build(flame);
         flame.active = false;
         const pos = new Vec3();
@@ -470,7 +473,7 @@ export class KartGame extends Component {
         sun.setParent(this.node);
         sun.setRotationFromEuler(-55, 180, 0);
         const sunLight = sun.addComponent(DirectionalLight);
-        sunLight.illuminance = 2.0;
+        sunLight.illuminance = 2.4;
         sunLight.color = new Color(255, 244, 214, 255);
 
         const fill = new Node('fill');
@@ -478,7 +481,7 @@ export class KartGame extends Component {
         fill.setParent(this.node);
         fill.setRotationFromEuler(-50, 0, 0);
         const fillLight = fill.addComponent(DirectionalLight);
-        fillLight.illuminance = 1.1;
+        fillLight.illuminance = 1.6;
         fillLight.color = new Color(215, 228, 255, 255);
 
         const kartsRoot = new Node('karts');
@@ -503,7 +506,7 @@ export class KartGame extends Component {
             uvs: smokePrim.uvs, indices: smokePrim.indices,
             minPos: new Vec3(-0.5, -0.5, -0.5), maxPos: new Vec3(0.5, 0.5, 0.5),
         });
-        const smokeMat = MeshBuilder.unlitMaterial(0xc3c9ce);
+        const smokeMat = MeshBuilder.unlitMaterial(0x9aa0a6);
         for (let i = 0; i < SMOKE_POOL; i++) {
             const node = new Node('smoke');
             node.layer = Layers.Enum.DEFAULT;
@@ -527,7 +530,7 @@ export class KartGame extends Component {
             uvs: sparkPrim.uvs, indices: sparkPrim.indices,
             minPos: new Vec3(-0.5, -0.5, -0.5), maxPos: new Vec3(0.5, 0.5, 0.5),
         });
-        const sparkMat = MeshBuilder.unlitMaterial(0xffc21a);
+        const sparkMat = MeshBuilder.unlitMaterial(0xff9d00);
         for (let i = 0; i < SPARK_POOL; i++) {
             const node = new Node('spark');
             node.layer = Layers.Enum.DEFAULT;
@@ -1104,8 +1107,8 @@ export class KartGame extends Component {
             // the background karts keep coasting/drifting behind it.
             if (k.driftTime > 0 && this.state !== 'finished' && Math.abs(k.sTotal - this._player.sTotal) < 90) {
                 k.smokeAcc += dt;
-                while (k.smokeAcc >= 0.05) {
-                    k.smokeAcc -= 0.05;
+                while (k.smokeAcc >= 0.09) {
+                    k.smokeAcc -= 0.09;
                     const side = Math.random() < 0.5 ? -0.85 : 0.85;
                     const sideSign = side < 0 ? -1 : 1;
                     this._track.posAt(k.sTotal - 1.1, k.d + side, this._smokePos);
@@ -1174,17 +1177,19 @@ export class KartGame extends Component {
         for (const s of this._sparks) { s.node.active = false; }
     }
 
-    /** fix131: smaller, shorter-lived puffs (spawn 0.30, grow to ~1.2)
-     * that billow outward from the wheel. */
+    /** fix132: smaller, shorter-lived, darker puffs (spawn 0.22, grow to
+     * ~0.55, mid-grey so they never read as white blobs) that billow
+     * outward from the wheel — plus a near-camera shrink, so a puff
+     * right in front of the chase cam can never fill the frame. */
     private _spawnSmoke(x: number, y: number, z: number, vx: number = 0, vz: number = 0): void {
         for (const s of this._smoke) {
             if (s.node.active) { continue; }
             s.node.active = true;
             s.node.setPosition(x, y, z);
-            s.life = s.maxLife = 0.55 + Math.random() * 0.25;
+            s.life = s.maxLife = 0.45 + Math.random() * 0.15;
             s.vx = vx;
             s.vz = vz;
-            s.node.setScale(0.30, 0.30, 0.30);
+            s.node.setScale(0.22, 0.22, 0.22);
             return;
         }
     }
@@ -1195,25 +1200,34 @@ export class KartGame extends Component {
             s.life -= dt;
             if (s.life <= 0) { s.node.active = false; continue; }
             const t = 1 - s.life / s.maxLife; // 0..1 grown
-            const grow = 0.30 + t * 0.9;
+            const grow = 0.22 + t * 0.33;
             const end = s.life < 0.18 ? Math.max(0.05, s.life / 0.18) : 1;
-            s.node.setScale(grow * end, grow * end, grow * end);
+            // shrink puffs near the chase cam (scale x0.25 at the lens,
+            // full size past 4 m) — smoke must read as drift effect,
+            // never as a wall in front of the camera
             const p = s.node.position;
-            s.node.setPosition(p.x + s.vx * dt, p.y + dt * 1.1, p.z + s.vz * dt);
+            const dx = p.x - this._camPos.x, dy = p.y - this._camPos.y, dz = p.z - this._camPos.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            const near = dist < 4 ? Math.max(0.25, dist / 4) : 1;
+            const sc = grow * end * near;
+            s.node.setScale(sc, sc, sc);
+            s.node.setPosition(p.x + s.vx * dt, p.y + dt * 0.6, p.z + s.vz * dt);
         }
     }
 
-    /** Step 4: grab a free spark node, light it at the rear wheel. */
+    /** Step 4: grab a free spark node, light it at the rear wheel.
+     * fix132: bigger + deeper gold-orange (the old 0xffc21a dots read
+     * white next to the near-white smoke; the smoke is darker now too). */
     private _spawnSpark(x: number, y: number, z: number, vx: number = 0, vz: number = 0): void {
         for (const s of this._sparks) {
             if (s.node.active) { continue; }
             s.node.active = true;
             s.node.setPosition(x, y, z);
-            s.life = s.maxLife = 0.35 + Math.random() * 0.2;
+            s.life = s.maxLife = 0.4 + Math.random() * 0.2;
             s.vx = vx;
             s.vy = 2.0 + Math.random() * 1.5;
             s.vz = vz;
-            s.node.setScale(0.30, 0.30, 0.30);
+            s.node.setScale(0.38, 0.38, 0.38);
             return;
         }
     }
@@ -1225,7 +1239,7 @@ export class KartGame extends Component {
             s.life -= dt;
             if (s.life <= 0) { s.node.active = false; continue; }
             const t = s.life / s.maxLife; // 1..0 shrinking
-            const sc = 0.30 * t;
+            const sc = 0.38 * t;
             s.node.setScale(sc, sc, sc);
             s.vy -= 6 * dt; // gravity: the burst arcs and falls
             const p = s.node.position;
