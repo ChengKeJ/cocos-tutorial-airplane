@@ -557,6 +557,10 @@ export class KartGame extends Component {
                 if (allDone || this._resultsT >= KartConstants.RESULTS_DELAY) {
                     this._resultsShown = true;
                     this.state = 'finished';
+                    // kill live smoke/spark puffs so none drift across the
+                    // results panel while it is up (the background keeps
+                    // rolling behind it).
+                    this._clearSmokeSparks();
                     if (this.ui) { this.ui.showResults(this._results()); }
                 }
             }
@@ -1022,8 +1026,10 @@ export class KartGame extends Component {
                 const f = 0.85 + 0.3 * Math.sin(this._raceTime * 43 + k.sTotal * 0.1);
                 k.flame.setScale(f, f, 0.8 + 0.5 * Math.random());
             }
-            // drift smoke: rear-wheel puffs while drifting (nearby karts only)
-            if (k.driftTime > 0 && Math.abs(k.sTotal - this._player.sTotal) < 90) {
+            // drift smoke: rear-wheel puffs while drifting (nearby karts only).
+            // No new puffs once results are up — the panel is on screen and
+            // the background karts keep coasting/drifting behind it.
+            if (k.driftTime > 0 && this.state !== 'finished' && Math.abs(k.sTotal - this._player.sTotal) < 90) {
                 k.smokeAcc += dt;
                 while (k.smokeAcc >= 0.05) {
                     k.smokeAcc -= 0.05;
@@ -1079,6 +1085,15 @@ export class KartGame extends Component {
         else if (this.state === 'countdown') { vol = 0.15; }
         else if (this.state === 'paused') { vol = 0.03; }
         (this._engineSrc as any).volume = vol;
+    }
+
+    /** Results are up: deactivate every live smoke/spark puff at once
+     * (they fade in 0.25–0.8 s on their own, which is long enough to
+     * drift across the panel). Emission is separately gated in
+     * _updateVisuals while state is 'finished'. */
+    private _clearSmokeSparks(): void {
+        for (const s of this._smoke) { s.node.active = false; }
+        for (const s of this._sparks) { s.node.active = false; }
     }
 
     private _spawnSmoke(x: number, y: number, z: number): void {
