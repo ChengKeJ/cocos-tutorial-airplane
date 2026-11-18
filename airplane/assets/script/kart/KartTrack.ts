@@ -5,9 +5,12 @@
  * (MIT-licensed reference implementation): the same 16-leg curvature schedule,
  * elevation / half-width / banking keyframes, box-blurred curvature,
  * exact -2PI renormalisation and uniform arc-length resampling.
+ * Two circuits share this system (TrackDef): 'sunset' （阳光海岸， the
+ * original coastal circuit) and 'canyon' （峡谷狂飙， desert canyon).
  * The world built on top of it is OURS: procedural Cocos meshes
- * (ribbon road, skirt, water, trees, houses, rocks, tunnel, bridge,
- * start gantry, boost pads) — no art assets, no Three.js, no DOM.
+ * (ribbon road, skirt, water / dry lake, trees / cacti, houses / huts,
+ * rocks, tunnel / rock arch, bridge, start gantry, boost pads) — no art
+ * assets, no Three.js, no DOM.
  *
  * Arcade model: a kart's state is (s = metres along the centreline,
  * d = lateral offset from it). sampleAt(s) returns the interpolated
@@ -20,78 +23,237 @@ import { Layers, Material, ModelComponent, Node, Quat, Vec3, Color, primitives, 
 // Layout tables (spec: src/world/TrackLayout.ts)
 // ---------------------------------------------------------------------------
 
-/** [length metres, heading change degrees] (negative = left). */
-const LEGS: Array<[number, number]> = [
-    [160, -13.85],  // start straight — harbour boulevard
-    [192, -102.06], // harbour sweep
-    [70, -44.48],   // village ess A (left)
-    [60, 40.84],    // village ess B (right)
-    [66, -44.12],   // village ess C (left, off-camber)
-    [60, -20.79],   // village ess D (left)
-    [90, -21.02],   // cliff traverse A
-    [74, -4.13],    // cliff traverse B
-    [60, -17.70],   // cliff traverse C
-    [128, -21.13],  // tunnel
-    [110, -2.81],   // beach descent A
-    [114, -21.15],  // beach descent B
-    [192, -170.85], // banked coastal 180
-    [60, 42.32],    // bridge approach
-    [84, 11.22],    // bridge span
-    [80, 24.47],    // return to the line
-];
-const PLAN_LENGTH = 1600;
-const START_HEADING = 45 * Math.PI / 180;
+// ---------------------------------------------------------------------------
+// Track definitions — two circuits, one system.
+// Track 1 'sunset' （阳光海岸） is the original 1606 m coastal circuit
+// (harbour / village / cliff / tunnel / beach / bridge). Track 2 'canyon'
+// （峡谷狂飙） is a NEW desert-canyon circuit: sand, rock walls, cacti,
+// a natural rock arch, an oasis — same scale, same rules, different look
+// and rhythm. Both are original content; nothing is copied from any
+// commercial kart game.
+// ---------------------------------------------------------------------------
+
+export type TrackZoneKind = 'normal' | 'village' | 'tunnel' | 'bridge' | 'cliff';
 
 type Keys = Array<[number, number]>;
 
-const ELEVATION: Keys = [
-    [0.000, 3.0], [0.100, 3.6], [0.220, 7.0], [0.300, 15.0],
-    [0.380, 29.0], [0.440, 41.5], [0.500, 38.0], [0.560, 33.0],
-    [0.600, 28.0], [0.660, 16.0], [0.720, 5.5], [0.800, 14.0],
-    [0.860, 24.0], [0.900, 19.5], [0.935, 14.5], [0.962, 9.0],
-    [0.982, 4.6], [0.995, 3.15],
-];
+export interface TrackZoneDef {
+    t0: number;
+    name: string;
+    ground: number; // 0xRRGGBB skirt colour for this zone
+    kind?: TrackZoneKind;
+}
 
-const HALF_WIDTH: Keys = [
-    [0.000, 8.8], [0.070, 8.6], [0.140, 8.1], [0.210, 7.5],
-    [0.270, 7.0], [0.330, 6.8], [0.380, 6.4], [0.440, 5.7],
-    [0.480, 5.4], [0.521, 5.9], [0.560, 6.3], [0.620, 6.9],
-    [0.700, 7.6], [0.760, 8.8], [0.830, 8.7], [0.880, 7.2],
-    [0.930, 7.0], [0.968, 8.2],
-];
+export interface TrackDef {
+    id: string; // menu id + localStorage key suffix
+    name: string; // menu name
+    desc: string; // one-line menu description
+    /** [length metres, heading change degrees] (negative = left). */
+    legs: Array<[number, number]>;
+    planLength: number;
+    startHeadingDeg: number;
+    elevation: Keys;
+    halfWidth: Keys;
+    bank: Keys; // degrees; positive = right side raised
+    zones: TrackZoneDef[];
+    boostPads: Array<{ t0: number; t1: number; lat: number; hw: number }>;
+    // ---- theme (all procedural colours) ----
+    road: number;
+    water: number; // big flat plane under the world (sea / dry lake bed)
+    treeKind: 'pine' | 'cactus';
+    treeLeaf: [number, number]; // two greens, picked at random
+    treeTrunk: number;
+    houseWall: number;
+    houseRoof: number;
+    houseRoofKind: 'cone' | 'flat';
+    mountain: [number, number];
+    mountainKind: 'cone' | 'mesa';
+    rock: number;
+    tunnelRock: number; // portals + roof (tunnel / rock arch)
+    cloud: number;
+    // ---- scenery feature ranges (fractions of lap; omit if absent) ----
+    villageT?: [number, number]; // houses / huts
+    cliffT?: [number, number]; // rocks
+    rockBothSides?: boolean; // rocks on both sides (default: left only)
+    tunnelT?: [number, number]; // tunnel / rock arch
+    bridgeT?: [number, number]; // bridge parapets
+    seed: number; // scenery RNG seed (different per track)
+}
 
-/** degrees; positive = right side raised. */
-const BANK: Keys = [
-    [0.000, 0], [0.070, 0], [0.130, 7], [0.170, 9.5], [0.210, 5],
-    [0.240, 4], [0.265, 5],
-    [0.283, -6], [0.312, -4], [0.330, -4],
-    [0.348, 0], [0.366, 4], [0.400, 3], [0.440, 2], [0.482, 3],
-    [0.520, 4], [0.560, 5], [0.600, 3], [0.660, 2], [0.700, 6],
-    [0.735, 12], [0.775, 20], [0.820, 20], [0.848, 12], [0.870, 2],
-    [0.893, -5], [0.925, -3], [0.958, -6], [0.985, -2],
-];
+const TRACK_SUNSET: TrackDef = {
+    id: 'sunset',
+    name: '阳光海岸',
+    desc: '海港村庄 · 沙滩大桥',
+    legs: [
+        [160, -13.85],  // start straight — harbour boulevard
+        [192, -102.06], // harbour sweep
+        [70, -44.48],   // village ess A (left)
+        [60, 40.84],    // village ess B (right)
+        [66, -44.12],   // village ess C (left, off-camber)
+        [60, -20.79],   // village ess D (left)
+        [90, -21.02],   // cliff traverse A
+        [74, -4.13],    // cliff traverse B
+        [60, -17.70],   // cliff traverse C
+        [128, -21.13],  // tunnel
+        [110, -2.81],   // beach descent A
+        [114, -21.15],  // beach descent B
+        [192, -170.85], // banked coastal 180
+        [60, 42.32],    // bridge approach
+        [84, 11.22],    // bridge span
+        [80, 24.47],    // return to the line
+    ],
+    planLength: 1600,
+    startHeadingDeg: 45,
+    elevation: [
+        [0.000, 3.0], [0.100, 3.6], [0.220, 7.0], [0.300, 15.0],
+        [0.380, 29.0], [0.440, 41.5], [0.500, 38.0], [0.560, 33.0],
+        [0.600, 28.0], [0.660, 16.0], [0.720, 5.5], [0.800, 14.0],
+        [0.860, 24.0], [0.900, 19.5], [0.935, 14.5], [0.962, 9.0],
+        [0.982, 4.6], [0.995, 3.15],
+    ],
+    halfWidth: [
+        [0.000, 8.8], [0.070, 8.6], [0.140, 8.1], [0.210, 7.5],
+        [0.270, 7.0], [0.330, 6.8], [0.380, 6.4], [0.440, 5.7],
+        [0.480, 5.4], [0.521, 5.9], [0.560, 6.3], [0.620, 6.9],
+        [0.700, 7.6], [0.760, 8.8], [0.830, 8.7], [0.880, 7.2],
+        [0.930, 7.0], [0.968, 8.2],
+    ],
+    bank: [
+        [0.000, 0], [0.070, 0], [0.130, 7], [0.170, 9.5], [0.210, 5],
+        [0.240, 4], [0.265, 5],
+        [0.283, -6], [0.312, -4], [0.330, -4],
+        [0.348, 0], [0.366, 4], [0.400, 3], [0.440, 2], [0.482, 3],
+        [0.520, 4], [0.560, 5], [0.600, 3], [0.660, 2], [0.700, 6],
+        [0.735, 12], [0.775, 20], [0.820, 20], [0.848, 12], [0.870, 2],
+        [0.893, -5], [0.925, -3], [0.958, -6], [0.985, -2],
+    ],
+    zones: [
+        { t0: 0.000, name: '起点', ground: 0x5a9448 },
+        { t0: 0.100, name: '海港', ground: 0x5a9448 },
+        { t0: 0.220, name: '村庄', ground: 0x7a9a58, kind: 'village' },
+        { t0: 0.380, name: '悬崖', ground: 0x8a7a68, kind: 'cliff' },
+        { t0: 0.521, name: '隧道', ground: 0x555560, kind: 'tunnel' },
+        { t0: 0.600, name: '沙滩', ground: 0xd8c28a },
+        { t0: 0.740, name: '弯道', ground: 0x5a9448 },
+        { t0: 0.860, name: '引桥', ground: 0x5a9448 },
+        { t0: 0.893, name: '大桥', ground: 0x5a9448, kind: 'bridge' },
+        { t0: 0.950, name: '回程', ground: 0x5a9448 },
+    ],
+    boostPads: [
+        { t0: 0.5380, t1: 0.5555, lat: -2.9, hw: 1.9 },
+        { t0: 0.5380, t1: 0.5555, lat: 2.9, hw: 1.9 },
+        { t0: 0.5720, t1: 0.5895, lat: 0.0, hw: 2.6 },
+        { t0: 0.9575, t1: 0.9740, lat: -3.1, hw: 2.2 },
+        { t0: 0.9575, t1: 0.9740, lat: 3.1, hw: 2.2 },
+    ],
+    road: 0x3a3f4a,
+    water: 0x3f8cc8,
+    treeKind: 'pine',
+    treeLeaf: [0x34823e, 0x3f9a4a],
+    treeTrunk: 0x6e5234,
+    houseWall: 0xe8d6b4,
+    houseRoof: 0xac543e,
+    houseRoofKind: 'cone',
+    mountain: [0x5a6a7a, 0x4a6a52],
+    mountainKind: 'cone',
+    rock: 0x807a74,
+    tunnelRock: 0x464650,
+    cloud: 0xffffff,
+    villageT: [0.225, 0.375],
+    cliffT: [0.385, 0.515],
+    tunnelT: [0.521, 0.599],
+    bridgeT: [0.893, 0.950],
+    seed: 1907240611,
+};
 
-/** Zone names + ground colour, by start t. Names are ours; t-ranges follow the spec. */
-const ZONES: Array<{ t0: number; name: string; ground: number }> = [
-    { t0: 0.000, name: '起点', ground: 0x5a9448 },
-    { t0: 0.100, name: '海港', ground: 0x5a9448 },
-    { t0: 0.220, name: '村庄', ground: 0x7a9a58 },
-    { t0: 0.380, name: '悬崖', ground: 0x8a7a68 },
-    { t0: 0.521, name: '隧道', ground: 0x555560 },
-    { t0: 0.600, name: '沙滩', ground: 0xd8c28a },
-    { t0: 0.740, name: '弯道', ground: 0x5a9448 },
-    { t0: 0.860, name: '引桥', ground: 0x5a9448 },
-    { t0: 0.893, name: '大桥', ground: 0x5a9448 },
-    { t0: 0.950, name: '回程', ground: 0x5a9448 },
-];
+const TRACK_CANYON: TrackDef = {
+    id: 'canyon',
+    name: '峡谷狂飙',
+    desc: '沙漠岩壁 · 岩拱绿洲',
+    legs: [
+        // NOTE: these turns were fitted numerically (see optimise-legs.js)
+        // so the centreline closes naturally (residual 0.05 m, kscale
+        // 0.98 — same as the sunset track). Do not "round" them by hand:
+        // the closure is sensitive to the exact distribution.
+        [200, -5.47],   // start straight — desert highway
+        [130, -59.38],  // canyon sweep
+        [80, 71.79],    // rock-gate kink (right)
+        [70, -35.85],   // left
+        [95, -145.47],  // hairpin — canyon bowl
+        [200, -3.34],   // dune straight
+        [65, 47.50],    // right
+        [70, -35.34],   // slalom A (left)
+        [65, 37.09],    // slalom B (right)
+        [85, -20.24],   // left
+        [150, -134.67], // mesa sweep
+        [95, 16.40],    // right
+        [145, -14.76],  // back straight
+        [150, -84.89],  // final turn to the line
+    ],
+    planLength: 1600,
+    startHeadingDeg: 45,
+    elevation: [
+        [0.000, 4.0], [0.100, 5.0], [0.200, 8.0], [0.300, 18.0],
+        [0.380, 32.0], [0.450, 38.0], [0.500, 36.0], [0.580, 30.0],
+        [0.660, 22.0], [0.740, 12.0], [0.820, 8.0], [0.900, 6.0],
+        [0.950, 5.0], [0.980, 4.5],
+    ],
+    halfWidth: [
+        [0.000, 8.5], [0.100, 8.2], [0.200, 7.2], [0.300, 6.2],
+        [0.380, 5.8], [0.450, 5.6], [0.520, 6.0], [0.600, 6.8],
+        [0.700, 7.5], [0.800, 8.4], [0.900, 8.2], [0.950, 8.0],
+    ],
+    bank: [
+        [0.000, 0], [0.100, 0], [0.150, 6], [0.200, 8], [0.250, 4],
+        [0.300, -4], [0.350, 0], [0.400, 3], [0.500, 4], [0.600, 5],
+        [0.700, 10], [0.750, 16], [0.800, 14], [0.850, 6],
+        [0.900, -3], [0.950, -2],
+    ],
+    zones: [
+        { t0: 0.000, name: '起点', ground: 0xd8b078 },
+        { t0: 0.100, name: '沙漠', ground: 0xdcb47e },
+        { t0: 0.250, name: '岩门', ground: 0xc08a5a, kind: 'cliff' },
+        { t0: 0.360, name: '岩拱', ground: 0xb0704a, kind: 'tunnel' },
+        { t0: 0.430, name: '峡谷', ground: 0xb0704a, kind: 'cliff' },
+        { t0: 0.520, name: '沙丘', ground: 0xe0c090 },
+        { t0: 0.660, name: '绿洲', ground: 0x8a9a58, kind: 'village' },
+        { t0: 0.780, name: '台地', ground: 0xc08a5a },
+        { t0: 0.900, name: '回程', ground: 0xd8b078 },
+    ],
+    boostPads: [
+        { t0: 0.3350, t1: 0.3520, lat: -2.9, hw: 1.9 },
+        { t0: 0.3350, t1: 0.3520, lat: 2.9, hw: 1.9 },
+        { t0: 0.4850, t1: 0.5020, lat: 0.0, hw: 2.6 },
+        { t0: 0.9050, t1: 0.9220, lat: -3.1, hw: 2.2 },
+        { t0: 0.9050, t1: 0.9220, lat: 3.1, hw: 2.2 },
+    ],
+    road: 0x463832,
+    water: 0xe8d0a0, // dry lake bed (sand), not sea
+    treeKind: 'cactus',
+    treeLeaf: [0x3d8a4a, 0x4a9a55],
+    treeTrunk: 0x3d8a4a,
+    houseWall: 0xe0c090, // adobe
+    houseRoof: 0xb0703a, // terracotta flat roof
+    houseRoofKind: 'flat',
+    mountain: [0xa85a34, 0x8a4a2c],
+    mountainKind: 'mesa',
+    rock: 0x9a5f38,
+    tunnelRock: 0x9a5f38, // natural rock arch, sandstone
+    cloud: 0xffffff,
+    villageT: [0.665, 0.775],
+    cliffT: [0.250, 0.520],
+    rockBothSides: true,
+    tunnelT: [0.360, 0.425],
+    seed: 20261118,
+};
 
-export const BOOST_PADS: Array<{ t0: number; t1: number; lat: number; hw: number }> = [
-    { t0: 0.5380, t1: 0.5555, lat: -2.9, hw: 1.9 },
-    { t0: 0.5380, t1: 0.5555, lat: 2.9, hw: 1.9 },
-    { t0: 0.5720, t1: 0.5895, lat: 0.0, hw: 2.6 },
-    { t0: 0.9575, t1: 0.9740, lat: -3.1, hw: 2.2 },
-    { t0: 0.9575, t1: 0.9740, lat: 3.1, hw: 2.2 },
-];
+export const TRACK_DEFS: TrackDef[] = [TRACK_SUNSET, TRACK_CANYON];
+
+/** Unknown / legacy ids fall back to the original track. */
+export function trackDefById(id: string): TrackDef {
+    for (const d of TRACK_DEFS) { if (d.id === id) { return d; } }
+    return TRACK_SUNSET;
+}
 
 export const CHECKPOINTS = 32;
 export const STATION_DS = 0.5;
@@ -206,14 +368,14 @@ interface CenterlineData {
     race: Float32Array; zone: Uint8Array;
 }
 
-function buildCenterline(): CenterlineData {
+function buildCenterline(def: TrackDef): CenterlineData {
     // pass 1: integrate a smoothed curvature schedule in the XZ plane
     const DS0 = 0.25;
-    const N0 = Math.round(PLAN_LENGTH / DS0);
+    const N0 = Math.round(def.planLength / DS0);
     const raw = new Float64Array(N0);
     {
         let s = 0;
-        for (const [len, turn] of LEGS) {
+        for (const [len, turn] of def.legs) {
             const k = (turn * Math.PI / 180) / len;
             const i0 = Math.round(s / DS0), i1 = Math.round((s + len) / DS0);
             for (let i = i0; i < i1; i++) { raw[i] = k; }
@@ -227,7 +389,7 @@ function buildCenterline(): CenterlineData {
 
     const X = new Float64Array(N0 + 1), Z = new Float64Array(N0 + 1);
     {
-        let th = START_HEADING, x = 0, z = 0;
+        let th = def.startHeadingDeg * Math.PI / 180, x = 0, z = 0;
         for (let i = 0; i < N0; i++) {
             X[i] = x; Z[i] = z;
             x += Math.cos(th) * DS0;
@@ -244,7 +406,7 @@ function buildCenterline(): CenterlineData {
     const Y = new Float64Array(N0 + 1);
     for (let i = 0; i <= N0; i++) {
         const u = (i / N0) % 1;
-        Y[i] = cyclic(ELEVATION, u)
+        Y[i] = cyclic(def.elevation, u)
             + 0.74 * Math.sin(u * Math.PI * 2 * 7 + 0.9)
             + 0.33 * Math.sin(u * Math.PI * 2 * 13 + 2.4);
     }
@@ -290,8 +452,8 @@ function buildCenterline(): CenterlineData {
     // widths, banking, banked frame, curvature
     for (let i = 0; i < count; i++) {
         const t = i / count;
-        cl.half[i] = cyclicMonotone(HALF_WIDTH, t);
-        const b = cyclic(BANK, t) * Math.PI / 180;
+        cl.half[i] = cyclicMonotone(def.halfWidth, t);
+        const b = cyclic(def.bank, t) * Math.PI / 180;
         cl.bank[i] = b;
         // horizontal-reference right (rotation-minimising for a road)
         let hx = -cl.tz[i], hy = 0, hz = cl.tx[i];
@@ -308,8 +470,8 @@ function buildCenterline(): CenterlineData {
         cl.ny[i] = n0y * cb - hy * sb;
         cl.nz[i] = n0z * cb - hz * sb;
         // zone
-        let zi = ZONES.length - 1;
-        for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
+        let zi = def.zones.length - 1;
+        for (let k = 0; k < def.zones.length; k++) { if (def.zones[k].t0 <= t) { zi = k; } else { break; } }
         cl.zone[i] = zi;
     }
     for (let i = 0; i < count; i++) {
@@ -342,6 +504,7 @@ const _v1 = new Vec3();
 const _v2 = new Vec3();
 
 export class KartTrack {
+    public readonly def: TrackDef;
     public readonly length: number;
     public readonly count: number;
     public readonly ds: number;
@@ -359,8 +522,9 @@ export class KartTrack {
      */
     public reversed = false;
 
-    constructor() {
-        this._cl = buildCenterline();
+    constructor(def: TrackDef = TRACK_SUNSET) {
+        this.def = def;
+        this._cl = buildCenterline(def);
         this.length = this._cl.length;
         this.count = this._cl.count;
         this.ds = this._cl.ds;
@@ -450,9 +614,9 @@ export class KartTrack {
 
     public zoneNameAt(s: number): string {
         const t = this._mapS(s) / this.length;
-        let zi = ZONES.length - 1;
-        for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
-        return ZONES[zi].name;
+        let zi = this.def.zones.length - 1;
+        for (let k = 0; k < this.def.zones.length; k++) { if (this.def.zones[k].t0 <= t) { zi = k; } else { break; } }
+        return this.def.zones[zi].name;
     }
 
     /**
@@ -463,7 +627,7 @@ export class KartTrack {
      */
     public padBoostAt(s: number, d: number): boolean {
         const t = this._mapS(s) / this.length;
-        for (const pad of BOOST_PADS) {
+        for (const pad of this.def.boostPads) {
             if (t >= pad.t0 && t <= pad.t1 && Math.abs(d - pad.lat) < pad.hw) { return true; }
         }
         return false;
@@ -530,7 +694,7 @@ export class KartTrack {
         const builder = new MeshBuilder();
 
         // --- road ribbon: 3 verts per ring (left, crown, right), every 2 m ---
-        const ROAD = 0x3a3f4a;
+        const ROAD = this.def.road;
         const ringStep = 4; // stations
         const rings = Math.floor(cl.count / ringStep);
         const roadPos: number[] = [];
@@ -605,8 +769,8 @@ export class KartTrack {
         let runZone = ringZone[0];
         const flushSkirt = (r0: number, r1: number, zone: number) => {
             // bridge span has no skirt (water below)
-            if (zone === 8) { return; }
-            const ground = ZONES[zone].ground;
+            if (this.def.zones[zone].kind === 'bridge') { return; }
+            const ground = this.def.zones[zone].ground;
             const pos: number[] = [];
             const nor: number[] = [];
             const uv: number[] = [];
@@ -645,7 +809,7 @@ export class KartTrack {
 
         // --- water: one big flat box under everything ---
         const c = this.centroid(_v1);
-        builder.addBox(0x3f8cc8, _v2.set(c.x, 0.3, c.z), 0, 1400, 0.4, 1400);
+        builder.addBox(this.def.water, _v2.set(c.x, 0.3, c.z), 0, 1400, 0.4, 1400);
 
         // --- scenery: trees, houses, rocks, tunnel, bridge, gantry, pads ---
         this._buildScenery(builder);
@@ -653,9 +817,17 @@ export class KartTrack {
         builder.build(parent);
     }
 
+    /** Zone kind at lap fraction t (for scenery skips). */
+    private _zoneKindAt(t: number): TrackZoneKind {
+        const zones = this.def.zones;
+        let zi = zones.length - 1;
+        for (let k = 0; k < zones.length; k++) { if (zones[k].t0 <= t) { zi = k; } else { break; } }
+        return zones[zi].kind || 'normal';
+    }
+
     private _buildScenery(b: MeshBuilder): void {
         const cl = this._cl;
-        const rnd = mulberry32(1907240611);
+        const rnd = mulberry32(this.def.seed);
         const f = this._frame;
         const pos = new Vec3();
 
@@ -664,32 +836,53 @@ export class KartTrack {
         // 7-25 m off the road) never read in screenshots.
         for (let s = 8; s < this.length; s += 10) {
             const t = s / this.length;
-            let zi = ZONES.length - 1;
-            for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
-            if (zi === 4 || zi === 8) { continue; } // tunnel, bridge
+            const zk = this._zoneKindAt(t);
+            if (zk === 'tunnel' || zk === 'bridge') { continue; }
             this.sampleAt(s, f);
             const side = rnd() < 0.5 ? -1 : 1;
             const lat = side * (f.half + 4 + rnd() * 10);
             this.posAt(s, lat, pos);
             const y = pos.y - 0.25;
             const sc = 1.3 + rnd() * 0.9;
-            const trunkH = 2.4 * sc;
-            b.addCylinder(0x6e5234, new Vec3(pos.x, y + trunkH / 2, pos.z), 0, 0.3 * sc, 0.42 * sc, trunkH);
-            const fol = rnd() < 0.5 ? 0x34823e : 0x3f9a4a;
-            b.addCone(fol, new Vec3(pos.x, y + trunkH + 2.4 * sc, pos.z), 0, 2.3 * sc, 5.2 * sc, 10);
+            if (this.def.treeKind === 'cactus') {
+                // saguaro: main column + two arms (box arm + upright tip)
+                const colH = 4.6 * sc;
+                b.addCylinder(this.def.treeLeaf[0], new Vec3(pos.x, y + colH / 2, pos.z), 0, 0.5 * sc, 0.55 * sc, colH);
+                for (const armSide of [-1, 1]) {
+                    if (rnd() < 0.3) { continue; }
+                    const armY = y + colH * (0.45 + rnd() * 0.2);
+                    b.addBox(this.def.treeLeaf[1],
+                        new Vec3(pos.x + armSide * 1.0 * sc, armY, pos.z), 0, 1.6 * sc, 0.55 * sc, 0.55 * sc);
+                    b.addCylinder(this.def.treeLeaf[1],
+                        new Vec3(pos.x + armSide * 1.7 * sc, armY + 0.75 * sc, pos.z), 0, 0.27 * sc, 0.27 * sc, 1.5 * sc);
+                }
+            } else {
+                const trunkH = 2.4 * sc;
+                b.addCylinder(this.def.treeTrunk, new Vec3(pos.x, y + trunkH / 2, pos.z), 0, 0.3 * sc, 0.42 * sc, trunkH);
+                const fol = rnd() < 0.5 ? this.def.treeLeaf[0] : this.def.treeLeaf[1];
+                b.addCone(fol, new Vec3(pos.x, y + trunkH + 2.4 * sc, pos.z), 0, 2.3 * sc, 5.2 * sc, 10);
+            }
         }
 
-        // houses in the village (t 0.22-0.38), both sides every ~22 m
-        for (let s = 0.225 * this.length; s < 0.375 * this.length; s += 22) {
-            this.sampleAt(s, f);
-            for (const side of [-1, 1]) {
-                if (rnd() < 0.25) { continue; }
-                const lat = side * (f.half + 7 + rnd() * 4);
-                this.posAt(s, lat, pos);
-                const y = pos.y - 0.25;
-                const yaw = Math.atan2(f.tangent.x, f.tangent.z) + (rnd() - 0.5) * 0.3;
-                b.addBox(0xe8d6b4, new Vec3(pos.x, y + 2.2, pos.z), yaw, 7.5, 4.4, 6.5);
-                b.addCone(0xac543e, new Vec3(pos.x, y + 4.4 + 1.4, pos.z), yaw + Math.PI / 4, 5.2, 2.8, 4);
+        // houses / huts in the village zone, both sides every ~22 m
+        if (this.def.villageT) {
+            const [v0, v1] = this.def.villageT;
+            for (let s = v0 * this.length; s < v1 * this.length; s += 22) {
+                this.sampleAt(s, f);
+                for (const side of [-1, 1]) {
+                    if (rnd() < 0.25) { continue; }
+                    const lat = side * (f.half + 7 + rnd() * 4);
+                    this.posAt(s, lat, pos);
+                    const y = pos.y - 0.25;
+                    const yaw = Math.atan2(f.tangent.x, f.tangent.z) + (rnd() - 0.5) * 0.3;
+                    b.addBox(this.def.houseWall, new Vec3(pos.x, y + 2.2, pos.z), yaw, 7.5, 4.4, 6.5);
+                    if (this.def.houseRoofKind === 'flat') {
+                        // adobe hut: flat terracotta roof slab
+                        b.addBox(this.def.houseRoof, new Vec3(pos.x, y + 4.55, pos.z), yaw, 8.1, 0.5, 7.1);
+                    } else {
+                        b.addCone(this.def.houseRoof, new Vec3(pos.x, y + 4.4 + 1.4, pos.z), yaw + Math.PI / 4, 5.2, 2.8, 4);
+                    }
+                }
             }
         }
 
@@ -700,9 +893,8 @@ export class KartTrack {
         let bi = 0;
         for (let s = 30; s < this.length; s += 60) {
             const t = s / this.length;
-            let zi = ZONES.length - 1;
-            for (let k = 0; k < ZONES.length; k++) { if (ZONES[k].t0 <= t) { zi = k; } else { break; } }
-            if (zi === 4 || zi === 8) { continue; }
+            const zk = this._zoneKindAt(t);
+            if (zk === 'tunnel' || zk === 'bridge') { continue; }
             this.sampleAt(s, f);
             const side = (bi % 2 === 0) ? -1 : 1;
             const lat = side * (f.half + 4.5);
@@ -714,23 +906,30 @@ export class KartTrack {
             bi++;
         }
 
-        // distant mountains: a ring of big low-poly cones around the
-        // circuit so the horizon is never flat blue.
+        // distant mountains / mesas: a ring of big low-poly shapes around
+        // the circuit so the horizon is never flat blue.
         const cc = this.centroid(new Vec3());
         for (let i = 0; i < 10; i++) {
             const ang = (i / 10) * Math.PI * 2 + rnd() * 0.3;
             const r = 380 + rnd() * 140;
             const h = 70 + rnd() * 80;
             const base = 90 + rnd() * 70;
-            const col = i % 2 === 0 ? 0x5a6a7a : 0x4a6a52;
-            b.addCone(col, new Vec3(cc.x + Math.cos(ang) * r, h / 2 - 0.5, cc.z + Math.sin(ang) * r), 0, base, h, 6);
+            const col = i % 2 === 0 ? this.def.mountain[0] : this.def.mountain[1];
+            const mx = cc.x + Math.cos(ang) * r, mz = cc.z + Math.sin(ang) * r;
+            if (this.def.mountainKind === 'mesa') {
+                // flat-topped mesa: wide cylinder + a smaller cap rock
+                b.addCylinder(col, new Vec3(mx, h / 2 - 0.5, mz), 0, base * 0.95, base, h);
+                b.addCylinder(col, new Vec3(mx, h - 0.5 + 8, mz), 0, base * 0.55, base * 0.6, 16);
+            } else {
+                b.addCone(col, new Vec3(mx, h / 2 - 0.5, mz), 0, base, h, 6);
+            }
         }
 
         // clouds: flattened white spheres high up, scattered over the map
         for (let i = 0; i < 12; i++) {
             const ang = rnd() * Math.PI * 2;
             const r = 120 + rnd() * 260;
-            b.addSphere(0xffffff,
+            b.addSphere(this.def.cloud,
                 new Vec3(cc.x + Math.cos(ang) * r, 65 + rnd() * 30, cc.z + Math.sin(ang) * r),
                 0, 18 + rnd() * 14, 4 + rnd() * 3, 12 + rnd() * 8);
         }
@@ -746,38 +945,50 @@ export class KartTrack {
             b.addBox(0xf5d020, new Vec3(px, py, pz), yaw, 0.3, 0.06, 2.5);
         }
 
-        // rocks on the cliff left side (t 0.38-0.52)
-        for (let s = 0.385 * this.length; s < 0.515 * this.length; s += 14) {
-            this.sampleAt(s, f);
-            const lat = -(f.half + 3 + rnd() * 6);
-            this.posAt(s, lat, pos);
-            const sc = 1.5 + rnd() * 2.5;
-            b.addSphere(0x807a74, new Vec3(pos.x, pos.y - 0.25 + sc * 0.4, pos.z), 0, sc, sc * 0.7, sc);
-        }
-
-        // tunnel portals + roof segments (t 0.521-0.599)
-        const tun0 = 0.521 * this.length, tun1 = 0.599 * this.length;
-        for (let s = tun0; s < tun1; s += 12) {
-            this.sampleAt(s, f);
-            const yaw = Math.atan2(f.tangent.x, f.tangent.z);
-            const hw = f.half + 1.2;
-            for (const side of [-1, 1]) {
-                this.posAt(s, side * hw, pos);
-                b.addBox(0x464650, new Vec3(pos.x, pos.y + 3.5, pos.z), yaw, 0.8, 7, 0.8);
+        // rocks on the cliff side(s)
+        if (this.def.cliffT) {
+            const [c0, c1] = this.def.cliffT;
+            const sides = this.def.rockBothSides ? [-1, 1] : [-1];
+            for (let s = c0 * this.length; s < c1 * this.length; s += 14) {
+                this.sampleAt(s, f);
+                for (const side of sides) {
+                    const lat = side * (f.half + 3 + rnd() * 6);
+                    this.posAt(s, lat, pos);
+                    const sc = 1.5 + rnd() * 2.5;
+                    b.addSphere(this.def.rock, new Vec3(pos.x, pos.y - 0.25 + sc * 0.4, pos.z), 0, sc, sc * 0.7, sc);
+                }
             }
-            this.posAt(s, 0, pos);
-            b.addBox(0x464650, new Vec3(pos.x, pos.y + 7.1, pos.z), yaw, hw * 2 + 1.6, 0.8, 0.8);
-            b.addBox(0x3a3a44, new Vec3(pos.x, pos.y + 6.6, pos.z), yaw, hw * 2 + 1.6, 0.25, 12.5);
         }
 
-        // bridge parapets (t 0.893-0.950)
-        const br0 = 0.893 * this.length, br1 = 0.950 * this.length;
-        for (let s = br0; s < br1; s += 10) {
-            this.sampleAt(s, f);
-            const yaw = Math.atan2(f.tangent.x, f.tangent.z);
-            for (const side of [-1, 1]) {
-                this.posAt(s, side * (f.half + 1.7), pos);
-                b.addBox(0xa8a094, new Vec3(pos.x, pos.y + 0.6, pos.z), yaw, 0.6, 1.15, 10.5);
+        // tunnel portals + roof segments (rock arch on the canyon track)
+        if (this.def.tunnelT) {
+            const [tu0, tu1] = this.def.tunnelT;
+            const tun0 = tu0 * this.length, tun1 = tu1 * this.length;
+            for (let s = tun0; s < tun1; s += 12) {
+                this.sampleAt(s, f);
+                const yaw = Math.atan2(f.tangent.x, f.tangent.z);
+                const hw = f.half + 1.2;
+                for (const side of [-1, 1]) {
+                    this.posAt(s, side * hw, pos);
+                    b.addBox(this.def.tunnelRock, new Vec3(pos.x, pos.y + 3.5, pos.z), yaw, 0.8, 7, 0.8);
+                }
+                this.posAt(s, 0, pos);
+                b.addBox(this.def.tunnelRock, new Vec3(pos.x, pos.y + 7.1, pos.z), yaw, hw * 2 + 1.6, 0.8, 0.8);
+                b.addBox(this.def.tunnelRock, new Vec3(pos.x, pos.y + 6.6, pos.z), yaw, hw * 2 + 1.6, 0.25, 12.5);
+            }
+        }
+
+        // bridge parapets (sunset track only)
+        if (this.def.bridgeT) {
+            const [br0t, br1t] = this.def.bridgeT;
+            const br0 = br0t * this.length, br1 = br1t * this.length;
+            for (let s = br0; s < br1; s += 10) {
+                this.sampleAt(s, f);
+                const yaw = Math.atan2(f.tangent.x, f.tangent.z);
+                for (const side of [-1, 1]) {
+                    this.posAt(s, side * (f.half + 1.7), pos);
+                    b.addBox(0xa8a094, new Vec3(pos.x, pos.y + 0.6, pos.z), yaw, 0.6, 1.15, 10.5);
+                }
             }
         }
 
@@ -801,7 +1012,7 @@ export class KartTrack {
         }
 
         // boost pads (cyan strips on the road)
-        for (const pad of BOOST_PADS) {
+        for (const pad of this.def.boostPads) {
             const mid = ((pad.t0 + pad.t1) / 2) * this.length;
             const len = (pad.t1 - pad.t0) * this.length;
             this.sampleAt(mid, f);
