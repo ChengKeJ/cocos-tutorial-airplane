@@ -1,5 +1,5 @@
 /**
- * Kart HUD + touch controls for the hall kart game （飞车狂飙 v1.0.9).
+ * Kart HUD + touch controls for the hall kart game （飞车狂飙 v1.0.10).
  *
  * Touch (phones): left half = floating steer stick (push down = brake),
  * right side = DRIFT (hold) + ITEM (tap) buttons. Keyboard (desktop
