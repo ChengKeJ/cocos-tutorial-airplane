@@ -180,11 +180,13 @@ export function kart2WingTri(cz: number): boolean {
 }
 
 /** One decoded triangle of a bucket: centroid + max vertex height +
- * min/max |x| of its verts + max radial distance from the axle
- * (sqrt(y^2+z^2) — the wheel axle is the local X axis) + longest edge.
- * maxR/maxEdge drive the kart 7 wheel-fin filter (fix133); the body
- * filters use cz/maxVy, and fix134 R4 uses minVx (see kart7DropTri). */
-interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; minVx: number; maxR: number; maxEdge: number; }
+ * min/max |x| of its verts + max/min z of its verts + max radial
+ * distance from the axle (sqrt(y^2+z^2) — the wheel axle is the local
+ * X axis) + longest edge. maxR/maxEdge drive the kart 7 wheel-fin
+ * filter (fix133/135); the body filters use cz/maxVy, fix134 R4 uses
+ * minVx, and fix135 R5 uses maxVx (any vertex outboard) and maxVz
+ * (nose-tip long triangles) — see kart7DropTri. */
+interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; minVx: number; maxVx: number; maxVz: number; minVz: number; maxR: number; maxEdge: number; }
 
 /** fix132 kart 7 绯焰: drop the spiky rear (245 of 1242 body tris,
  * verified against the baked data):
@@ -200,6 +202,25 @@ interface TriGeom { cx: number; cy: number; cz: number; maxVy: number; minVx: nu
  * (minVx > 0.58); the main body reaches only |x| ≈ 0.50, and the
  * front fairing panels that span out to 0.62 have a vert at lower
  * |x|, so they survive. Drops 59 more tris (304 total, 938 kept).
+ * fix135 R5 (drive130 sixth re-run: spikes STILL jutting after R4 —
+ * the R4 minVx test keeps any long triangle with ONE vert inboard,
+ * so the front fairing panels R4 deliberately kept ARE the spikes):
+ *  R5a — ANY vertex outboard of |x| 0.52 (the main body shell
+ *  reaches only |x| ≈ 0.40; catches the front-corner flares
+ *  body[2] ti 276-283 + body[3] ti 110/111/120/121, the rear side
+ *  plates body[1] ti 116-121/150-153 + body[2] ti 132-134/234/
+ *  295/296/301/302/306/307, the long side plates body[2] ti 141/
+ *  143/145/226/229/235/237/243, the front wheel-well trim, and
+ *  body[0]'s 30 small front-side tris at |x| 0.55);
+ *  R5b — the nose-tip slivers (body[2] ti 258, body[3] ti 105/114:
+ *  a vertex past z 1.00 on a LONG triangle, maxEdge > 0.4 — the
+ *  pink nose spike; the small tip caps, maxEdge <= 0.17, survive).
+ *  R5 drops 213 more tris: 517 total, 725 kept (body[0] 464,
+ *  body[1] 105, body[2] 124, body[3] 32). The wedge nose + floor
+ *  pan (long tris up to maxEdge 1.46) and the nose spine survive:
+ *  they stay inboard of |x| 0.52 and short of z 1.00, except the
+ *  three slivers R5b takes. Verified in a Python render before
+ *  committing (fix135/kart7-r5final-zoom.png).
  * fix133: the shipped call site passed this to filterBucketTriangles
  * WITHOUT the negation, so the game kept ONLY these 245 spike tris
  * and dropped the other 997 body triangles — from the side/front the
@@ -212,6 +233,8 @@ export function kart7DropTri(hex: string, g: TriGeom): boolean {
     if (hex.toLowerCase() === '#101010' && g.maxVy > 0.55) { return true; }
     if (g.cz > 0.98 && Math.abs(g.cx) > 0.30) { return true; }
     if (g.minVx > 0.58) { return true; }
+    if (g.maxVx > 0.52) { return true; }
+    if (g.maxVz > 1.00 && g.maxEdge > 0.4) { return true; }
     return false;
 }
 
@@ -229,9 +252,26 @@ export function kart7DropTri(hex: string, g: TriGeom): boolean {
  * (tyre maxR ≤ 0.33, clean gap to 0.35) and read as a black sail
  * above the rear tyre in the side view (verified in a Python render
  * with the borderline tris highlighted). Tightened to 0.34: drops
- * 38 of 361 wheel tris (was 23). Exported for the node tests. */
-export function kart7WheelFinTri(g: TriGeom): boolean {
-    return g.maxR > 0.34 || g.maxEdge >= 0.45;
+ * 38 of 361 wheel tris (was 23).
+ * fix135: the maxR-only test STILL missed the fins that run ALONG
+ * the axle — e.g. wheelF[1] #0d0d0d ti=85 has a vertex at local
+ * x -0.426 (world x -0.852 on the fr wheel: a spike jutting out
+ * sideways). And the buckets are not tyres at all: only 17-57% of
+ * their verts sit inside the tyre-ring envelope (radial r max 0.78
+ * vs a 0.24 tyre). So this is now a full envelope clip, per axle:
+ * a triangle is a fin iff ANY vertex leaves the tyre cylinder
+ * (front: maxR > 0.26 or maxAx > 0.17; rear: maxR > 0.31 or
+ * maxAx > 0.26) — the cylinder is convex, so a triangle with all
+ * verts inside cannot stick out; the maxEdge clause stays as a
+ * backstop. Drops 96 of 361 wheel tris (front 25, rear 71;
+ * wheelF[2] drops entirely — a disc at |x| 0.22, r <= 0.12,
+ * floating off the axle; wheelR[2] keeps all 19 — a proper rim).
+ * NOTE: kart 7's wheels are now procedural (see mkWheel), so this
+ * filter is currently unused in the game — kept as the documented
+ * filter for the baked data, node-tested. Exported for the node tests. */
+export function kart7WheelFinTri(g: TriGeom, rear: boolean): boolean {
+    if (rear) { return g.maxR > 0.31 || g.maxVx > 0.26 || g.maxEdge >= 0.45; }
+    return g.maxR > 0.26 || g.maxVx > 0.17 || g.maxEdge >= 0.45;
 }
 
 /** bytes -> base64 (inverse of b64ToBytes, same alphabet; used when a
@@ -276,6 +316,8 @@ function forEachTri(b: KartModelBucket, fn: (g: TriGeom, a: number, c: number, d
             cx: (x0 + x1 + x2) / 3, cy: (y0 + y1 + y2) / 3, cz: (z0 + z1 + z2) / 3,
             maxVy: Math.max(y0, y1, y2),
             minVx: Math.min(Math.abs(x0), Math.abs(x1), Math.abs(x2)),
+            maxVx: Math.max(Math.abs(x0), Math.abs(x1), Math.abs(x2)),
+            maxVz: Math.max(z0, z1, z2), minVz: Math.min(z0, z1, z2),
             maxR: Math.max(Math.sqrt(y0 * y0 + z0 * z0), Math.sqrt(y1 * y1 + z1 * z1), Math.sqrt(y2 * y2 + z2 * z2)),
             maxEdge: Math.max(edge(x0, y0, z0, x1, y1, z1), edge(x1, y1, z1, x2, y2, z2), edge(x2, y2, z2, x0, y0, z0)),
         }, a, c, d);
@@ -552,12 +594,15 @@ function buildBodywork(body: Node, ki: number, colour: number): void {
 /** fix132 kart 5 橙光: the baked buggy body is rebuilt from scratch in
  * code — a dune buggy with a clean silhouette: floor pan, sloped hood,
  * cockpit tub, rear deck + dark engine cover, a roll cage that clears
- * the helmet (top y 0.88 vs helmet top 0.85), thin fender caps over
- * all four wheels, a front bumper bar, headlights and a brake light.
- * All body parts use the kart/paint colour so paints still recolour
- * the buggy; the engine cover, cage and bumper stay dark. Wheel
- * centres (baked): front z ~0.92..0.96, rear z ~-0.43..-0.46; seat
- * (0, 0.32, -0.25), steering (0, 0.52, 0.1). */
+ * the helmet (top y 0.88 vs helmet top 0.85), a front bumper bar,
+ * headlights and a brake light. All body parts use the kart/paint
+ * colour so paints still recolour the buggy; the engine cover, cage
+ * and bumper stay dark. NO fenders — fix135 deletes the fix134 thin
+ * caps: they read as floating orange saucers, clearly detached from
+ * the body in all three views (drive130 sixth re-run 49aa-kart5-*).
+ * Real buggies run exposed wheels, and the wheels already look fine.
+ * Wheel centres (baked): front z ~0.92..0.96, rear z ~-0.43..-0.46;
+ * seat (0, 0.32, -0.25), steering (0, 0.52, 0.1). */
 function buildBuggyBody(body: Node, colour: number): void {
     const paint = standardMaterial(colour, 0.15, 0.08, dimHex(colour, 0.15)); // fix133: same emissive floor as baked paint
     const dark = standardMaterial(0x1a1d24, 0.15, 0.35);
@@ -586,20 +631,14 @@ function buildBuggyBody(body: Node, colour: number): void {
     };
     hoop(-0.05, 'front');
     hoop(-0.48, 'rear');
-    // fix134: thin fender caps over the four wheels (baked centres).
-    // The old domes (sphere 0.30, y-scale 0.55, centre y 0.30) were
-    // bigger than the wheels in every direction and hid them entirely
-    // (drive130 fifth re-run 49z-kart5-*). A shallow cap (sphere 0.32,
-    // y-scale 0.25, centre y 0.60) sits just over the tyre top (front
-    // 0.55 / rear 0.58-0.61, measured from the baked wheel buckets) so
-    // the wheel shows below y 0.52. Verified in a Python render
-    // (rear/side/front) before coding.
-    const wheels: Array<[number, number]> = [[0.355, 0.92], [-0.328, 0.959], [0.401, -0.463], [-0.405, -0.428]];
-    for (let i = 0; i < wheels.length; i++) {
-        primNode(body, 'fender_' + i,
-            primitives.sphere(0.32, { segments: 12 }),
-            paint, wheels[i][0], 0.60, wheels[i][1], 0, 0, 0, 0.9, 0.25, 1.0);
-    }
+    // fix135: NO fenders. The fix134 thin caps (sphere 0.32, y-scale
+    // 0.25, centre y 0.60) read as floating orange saucers, clearly
+    // detached from the body in all three views — from the side they
+    // hover like pancakes with sky/road between them and the body
+    // (drive130 sixth re-run 49aa-kart5-*). Real buggies run exposed
+    // wheels, and the wheels already look fine, so the caps are
+    // deleted rather than replaced. Verified in a Python render
+    // (rear/side/front) before committing.
     // front bumper bar + headlights + brake light (unlit: they must glow)
     primNode(body, 'buggy_bumper',
         primitives.cylinder(0.04, 0.04, 0.70, { radialSegments: 8 }),
@@ -720,16 +759,41 @@ export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): 
         const spin = new Node(name + '_spin');
         spin.layer = Layers.Enum.DEFAULT;
         spin.setParent(pivot);
+        if (ki === 7) {
+            // fix135: the baked wheel buckets are fragmented fins, not
+            // tyres — only 17-57% of their verts sit inside the tyre
+            // ring envelope (radial r max 0.78 vs a 0.24 tyre), so
+            // every filter leaves black jags sticking out of the
+            // wheels (drive130 sixth re-run 49aa-kart7-*). Build clean
+            // procedural wheels instead: a full dark tyre cylinder
+            // (radius ~ the wheel-centre height so it touches the
+            // road; rear tyres wider, as on a dragster) + a silver
+            // rim disc on the outer face + a dark hub. The spin node
+            // still spins/steers them, and the collision footprint
+            // uses the wheel centres, so gameplay is untouched. The
+            // rim puck below is skipped for kart 7 (this returns
+            // first). Verified in a Python render (fix135/
+            // kart7-r5final-zoom.png) before coding.
+            const rear = buckets === data.wheelR;
+            const tyreR = center[1] * 0.98;
+            const tyreW = rear ? 0.48 : 0.28;
+            const tyre = addMeshNode(spin, 'tyre', rimDiscMesh(tyreR, tyreW), standardMaterial(0x1a1a1a, 0.0, 0.95));
+            tyre.setRotationFromEuler(0, 0, 90);
+            const out = center[0] > 0 ? 1 : -1;
+            const rimR = 0.62 * center[1];
+            // rim/hub sit 0.01 proud of the tyre face (outer face at
+            // tyreW/2 + 0.01 / +0.02) — exactly flush would z-fight
+            // with the tyre's flat cap.
+            const rim = addMeshNode(spin, 'rim', rimDiscMesh(rimR, 0.06), standardMaterial(0xd7dae0, 0.45, 0.20));
+            rim.setRotationFromEuler(0, 0, 90);
+            rim.setPosition(out * (tyreW / 2 - 0.02), 0, 0);
+            const hub = addMeshNode(spin, 'hub', rimDiscMesh(rimR * 0.45, 0.08), standardMaterial(0x2a2d33, 0.4, 0.35));
+            hub.setRotationFromEuler(0, 0, 90);
+            hub.setPosition(out * (tyreW / 2 - 0.02), 0, 0);
+            return pivot;
+        }
         for (const b of buckets) {
-            // fix133 kart 7 绯焰: the tyre buckets carry long fins (see
-            // kart7WheelFinTri) — drop them so only the tyre stays.
-            let bb = b;
-            if (ki === 7) {
-                const kept = filterBucketTriangles(b, (g) => !kart7WheelFinTri(g));
-                if (!kept) { continue; }
-                bb = kept;
-            }
-            addMeshNode(spin, 'tyre_' + b.role, bucketMesh(bb), materialForRole(b.role, parseHex(b.hex)));
+            addMeshNode(spin, 'tyre_' + b.role, bucketMesh(b), materialForRole(b.role, parseHex(b.hex)));
         }
         if (needsRimPuck) {
             const rimR = 0.62 * center[1];
