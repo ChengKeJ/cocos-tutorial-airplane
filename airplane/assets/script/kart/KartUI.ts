@@ -48,6 +48,14 @@ export class KartUI extends Component {
     private _countdownLabel: Label = null;
     private _toastLabel: Label = null;
     private _toastTime = 0;
+    // Pass E: countdown lights, big banner, results confetti + pop-in
+    private _countLights: Label[] = [];
+    private _bannerLabel: Label = null;
+    private _bannerTime = 0;
+    private _confetti: Graphics = null;
+    private _confettiParts: Array<{ x: number; y: number; vx: number; vy: number; c: Color; s: number }> = [];
+    private _confettiT = 0;
+    private _resultsPopT = 0;
     private _minimap: Graphics = null;
     private _minimapNode: Node = null;
     private _minimapT = 0;
@@ -114,6 +122,20 @@ export class KartUI extends Component {
             this._toastTime -= dt;
             if (this._toastTime <= 0 && this._toastLabel) { this._toastLabel.node.active = false; }
         }
+        // banner auto-hide
+        if (this._bannerTime > 0) {
+            this._bannerTime -= dt;
+            if (this._bannerTime <= 0 && this._bannerLabel) { this._bannerLabel.node.active = false; }
+        }
+        // results pop-in (scale 0.85 -> 1 over 0.25 s)
+        if (this._resultsPopT > 0) {
+            this._resultsPopT -= dt;
+            const t = Math.max(0, this._resultsPopT / 0.25);
+            const s = 1 - 0.15 * t;
+            if (this._resultsPanel) { this._resultsPanel.setScale(s, s, 1); }
+        }
+        // results confetti
+        this._updateConfetti(dt);
         // feed the game from the current input state (racing only)
         const racing = this._game.state === 'racing' || this._game.state === 'countdown';
         if (racing) {
@@ -178,6 +200,22 @@ export class KartUI extends Component {
         if (!this._countdownLabel) { return; }
         this._countdownLabel.string = text;
         this._countdownLabel.node.active = text.length > 0;
+        // lights: 3/2/1 fill red one by one, GO turns all green, '' hides
+        const lit = text === '3' ? 1 : text === '2' ? 2 : text === '1' ? 3 : text === 'GO!' ? 3 : 0;
+        const col = text === 'GO!' ? new Color(60, 220, 90, 255) : new Color(230, 50, 50, 255);
+        for (let i = 0; i < this._countLights.length; i++) {
+            const dot = this._countLights[i];
+            dot.node.active = text.length > 0;
+            dot.color = i < lit ? col : GREY;
+        }
+    }
+
+    /** Big centre banner (final lap) — auto-hides after `seconds`. */
+    public showBanner(text: string, seconds: number = 2) {
+        if (!this._bannerLabel) { return; }
+        this._bannerLabel.string = text;
+        this._bannerLabel.node.active = true;
+        this._bannerTime = seconds;
     }
 
     public showToast(text: string, seconds: number = 1.6) {
@@ -200,6 +238,10 @@ export class KartUI extends Component {
         }
         this._resultsPanel.active = true;
         this.showHud(false);
+        // ceremony: panel pops in from 0.85, confetti rains for ~2.5 s
+        this._resultsPanel.setScale(0.85, 0.85, 1);
+        this._resultsPopT = 0.25;
+        this._startConfetti();
         if (this._resultsTitle) {
             const mine = rows.findIndex((r) => r.isPlayer);
             this._resultsTitle.string = mine === 0 ? '🏆 冠军！' : '完赛！第 ' + (mine + 1) + ' 名';
@@ -409,6 +451,15 @@ export class KartUI extends Component {
         this._itemLabel = this._makeLabel(hud, 'itemLabel', 0, -520, 32, WHITE, '—');
         this._countdownLabel = this._makeLabel(this._canvas, 'countdownLabel', 0, 150, 120, GOLD, '');
         this._countdownLabel.node.active = false;
+        // countdown lights: 3 dots above the numeral, fill red per beat, green on GO
+        for (let i = 0; i < 3; i++) {
+            const dot = this._makeLabel(this._canvas, 'countLight' + i, (i - 1) * 80, 300, 56, GREY, '●');
+            dot.node.active = false;
+            this._countLights.push(dot);
+        }
+        // final-lap / big banner (centre, above the countdown spot)
+        this._bannerLabel = this._makeLabel(this._canvas, 'bannerLabel', 0, 250, 48, GOLD, '');
+        this._bannerLabel.node.active = false;
         this._toastLabel = this._makeLabel(hud, 'toastLabel', 0, -100, 28, WHITE, '');
         this._toastLabel.node.active = false;
 
@@ -474,6 +525,14 @@ export class KartUI extends Component {
         res.setPosition(0, 0, 0);
         this._resultsPanel = res;
         res.active = false;
+        // confetti layer (behind the text, full screen)
+        const cf = new Node('confetti');
+        cf.layer = Layers.Enum.UI_2D;
+        cf.setParent(res);
+        cf.setPosition(0, 0, 0);
+        const ct = cf.addComponent(UITransform);
+        ct.setContentSize(720, 1280);
+        this._confetti = cf.addComponent(Graphics);
         this._resultsTitle = this._makeLabel(res, 'title', 0, 330, 56, GOLD, '完赛！');
         this._resultsLabel = this._makeLabel(res, 'rows', 0, 60, 26, WHITE, '');
         this._makeButton(res, 'againBtn', 0, -260, 480, 110, '再来一局', 44,
@@ -532,6 +591,48 @@ export class KartUI extends Component {
 
     private _hideStick() {
         if (this._stickBase) { this._stickBase.active = false; }
+    }
+
+    // ---- results confetti ----
+
+    private _startConfetti(): void {
+        if (!this._confetti) { return; }
+        this._confettiParts = [];
+        const cols = [
+            new Color(230, 57, 70, 255), new Color(42, 157, 143, 255),
+            new Color(244, 162, 97, 255), new Color(67, 97, 238, 255),
+            new Color(255, 210, 63, 255),
+        ];
+        for (let i = 0; i < 70; i++) {
+            this._confettiParts.push({
+                x: (Math.random() - 0.5) * 700,
+                y: 300 + Math.random() * 340,
+                vx: (Math.random() - 0.5) * 60,
+                vy: -(120 + Math.random() * 180),
+                c: cols[i % cols.length],
+                s: 8 + Math.random() * 8,
+            });
+        }
+        this._confettiT = 2.5;
+    }
+
+    private _updateConfetti(dt: number): void {
+        if (!this._confetti) { return; }
+        if (this._confettiT <= 0) {
+            if (this._confettiParts.length > 0) { this._confettiParts = []; this._confetti.clear(); }
+            return;
+        }
+        this._confettiT -= dt;
+        const g = this._confetti;
+        g.clear();
+        for (const p of this._confettiParts) {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy -= 60 * dt; // gravity: falls faster over time
+            g.fillColor = p.c;
+            g.rect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s * 0.6);
+            g.fill();
+        }
     }
 
     // ---- speed lines ----
