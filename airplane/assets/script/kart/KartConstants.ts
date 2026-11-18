@@ -126,22 +126,75 @@ export interface DriverStats {
     topSpeedMul: number;
     weightMul: number;
     handlingMul: number;
+    /** One-line personality tag, shown in the kart select screen. */
+    tagline: string;
+    /** Accent colour: deck stripe + helmet. */
+    accent: number;
+    /** Spoiler style: low / tall / wide / fin (procedural shape variant). */
+    spoiler: 'low' | 'tall' | 'wide' | 'fin';
+    /** Nose shape: point / flat / round (procedural shape variant). */
+    nose: 'point' | 'flat' | 'round';
+    /** Side-pod size multiplier (0.85..1.2). */
+    pod: number;
+    /** Visible 1..5 stats — filled by the derivation loop below from the
+     * physics multipliers, so the select screen can never disagree with
+     * how the kart actually drives. Placeholders here, never hand-edited. */
+    speed: number;
+    accel: number;
+    drift: number;
+    /** Drift charge rate, derived from the drift stat (0.90..1.10). */
+    driftMul: number;
 }
 
 /**
  * Our own roster — stat multipliers follow the spec's roster, names and
  * colours are original Chinese driver names. Player is index 0 （凌风）.
+ * The visible 1..5 stats are derived from these multipliers (see below):
+ * no kart strictly dominates another on all three stats, and the
+ * physics envelope is unchanged (top speed 0.93..1.08, accel/handling
+ * 0.92..1.12), so track-1 balance stays close to drive119/122.
  */
 export const ROSTER: DriverStats[] = [
-    { name: '凌风', color: 0xff3b5c, dark: 0xc22540, accelMul: 1.00, topSpeedMul: 1.00, weightMul: 1.0, handlingMul: 1.00 },
-    { name: '海蓝', color: 0x2ea8ff, dark: 0x1d7cc9, accelMul: 0.92, topSpeedMul: 1.08, weightMul: 1.2, handlingMul: 0.92 },
-    { name: '闪电', color: 0xffd23f, dark: 0xd9a91e, accelMul: 1.12, topSpeedMul: 0.93, weightMul: 0.82, handlingMul: 1.12 },
-    { name: '青竹', color: 0x4ade5a, dark: 0x2fae3e, accelMul: 1.02, topSpeedMul: 0.99, weightMul: 0.95, handlingMul: 1.05 },
-    { name: '紫曜', color: 0x8b5cf6, dark: 0x6a3fd1, accelMul: 0.95, topSpeedMul: 1.05, weightMul: 1.1, handlingMul: 0.96 },
-    { name: '橙光', color: 0xff8a3d, dark: 0xd9661a, accelMul: 1.05, topSpeedMul: 0.97, weightMul: 0.9, handlingMul: 1.08 },
-    { name: '雪驰', color: 0x7ee8fa, dark: 0x4cb8cc, accelMul: 0.98, topSpeedMul: 1.02, weightMul: 1.0, handlingMul: 1.00 },
-    { name: '绯焰', color: 0xe8456b, dark: 0xb92a4e, accelMul: 1.08, topSpeedMul: 0.95, weightMul: 0.88, handlingMul: 1.10 },
+    { name: '凌风', color: 0xff3b5c, dark: 0xc22540, accelMul: 1.00, topSpeedMul: 1.00, weightMul: 1.0, handlingMul: 1.00, tagline: '风一样快', accent: 0xffffff, spoiler: 'tall', nose: 'point', pod: 1.0, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '海蓝', color: 0x2ea8ff, dark: 0x1d7cc9, accelMul: 0.92, topSpeedMul: 1.08, weightMul: 1.2, handlingMul: 0.97, tagline: '深海里的直线王', accent: 0x7ee8fa, spoiler: 'wide', nose: 'flat', pod: 1.15, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '闪电', color: 0xffd23f, dark: 0xd9a91e, accelMul: 1.12, topSpeedMul: 0.93, weightMul: 0.82, handlingMul: 1.07, tagline: '起步就甩开所有人', accent: 0x1a1a20, spoiler: 'fin', nose: 'point', pod: 0.85, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '青竹', color: 0x4ade5a, dark: 0x2fae3e, accelMul: 1.02, topSpeedMul: 0.97, weightMul: 0.95, handlingMul: 1.12, tagline: '竹林里练出的过弯', accent: 0x1a1a20, spoiler: 'low', nose: 'round', pod: 1.0, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '紫曜', color: 0x8b5cf6, dark: 0x6a3fd1, accelMul: 0.95, topSpeedMul: 1.05, weightMul: 1.1, handlingMul: 1.02, tagline: '夜里最亮的那道光', accent: 0xffd23f, spoiler: 'tall', nose: 'flat', pod: 1.1, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '橙光', color: 0xff8a3d, dark: 0xd9661a, accelMul: 1.05, topSpeedMul: 1.00, weightMul: 0.9, handlingMul: 0.92, tagline: '暖阳下从不减速', accent: 0x2ea8ff, spoiler: 'wide', nose: 'round', pod: 1.2, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '雪驰', color: 0x7ee8fa, dark: 0x4cb8cc, accelMul: 0.92, topSpeedMul: 1.05, weightMul: 1.0, handlingMul: 1.07, tagline: '雪地里也能稳稳漂移', accent: 0xff3b5c, spoiler: 'fin', nose: 'flat', pod: 0.9, speed: 0, accel: 0, drift: 0, driftMul: 1 },
+    { name: '绯焰', color: 0xe8456b, dark: 0xb92a4e, accelMul: 1.08, topSpeedMul: 0.95, weightMul: 0.88, handlingMul: 1.07, tagline: '火焰般的冲刺', accent: 0xffd23f, spoiler: 'low', nose: 'point', pod: 1.05, speed: 0, accel: 0, drift: 0, driftMul: 1 },
 ];
+
+/** Map a physics multiplier to a visible 1..5 stat (linear, rounded). */
+function stat5(mul: number, lo: number, hi: number): number {
+    const v = 1 + Math.round((mul - lo) / (hi - lo) * 4);
+    return Math.max(1, Math.min(5, v));
+}
+
+// Fill the visible stats from the physics multipliers (single source of
+// truth). Resulting triples — 凌风 (3,3,3), 海蓝 (5,1,2), 闪电 (1,5,4),
+// 青竹 (2,3,5), 紫曜 (4,2,3), 橙光 (3,4,1), 雪驰 (4,1,4), 绯焰 (2,4,4) —
+// no kart dominates another on all three.
+for (const d of ROSTER) {
+    d.speed = stat5(d.topSpeedMul, 0.93, 1.08);
+    d.accel = stat5(d.accelMul, 0.92, 1.12);
+    d.drift = stat5(d.handlingMul, 0.92, 1.12);
+    d.driftMul = 0.90 + (d.drift - 1) * 0.05;
+}
+
+/**
+ * Grid order for a race: the player's pick first, then the rest in
+ * roster order. So karts[0] is always the player and no AI duplicates
+ * the player's pick. Pure function (node-testable).
+ */
+export function rosterOrder(sel: number): number[] {
+    const s = (sel >= 0 && sel < ROSTER.length) ? sel : 0;
+    const out: number[] = [s];
+    for (let i = 0; i < ROSTER.length; i++) {
+        if (i !== s) { out.push(i); }
+    }
+    return out;
+}
 
 export const enum ItemKind {
     NONE = 0,
