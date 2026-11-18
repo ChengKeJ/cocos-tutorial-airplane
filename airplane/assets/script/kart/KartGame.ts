@@ -15,7 +15,7 @@
  */
 
 import { _decorator, AudioClip, AudioSource, Camera, Component, Layers, Material, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
-import { ItemKind, KartConstants, ROSTER, rosterOrder } from './KartConstants';
+import { ItemKind, KartConstants, PAINTS, PaintScheme, ROSTER, paintTapResult, parseOwnedPaints, parseSelectedPaints, rewardForFinish, rosterOrder } from './KartConstants';
 import { KartTrack, MeshBuilder, TrackFrame, trackDefById } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
 import { KartItems } from './KartItems';
@@ -27,6 +27,13 @@ const BEST_TIME_KEY_REV = 'kart_best_time_rev'; // 逆向 best
 const MODE_KEY = 'kart_mode'; // 'fwd' | 'rev', last chosen race direction
 const TRACK_KEY = 'kart_track'; // selected track id ('sunset' | 'canyon')
 const KART_KEY = 'kart_selected'; // selected roster index 0..7 (NEW key)
+// Phase 2 step 3: progression — all local, all cosmetic. Coins are
+// earned by finishing races; paints are colour swaps, never a gate.
+const COINS_KEY = 'kart_coins'; // coin balance
+const RACES_KEY = 'kart_races'; // total races finished
+const WINS_KEY = 'kart_wins'; // total P1 finishes
+const PAINTS_KEY = 'kart_paints'; // JSON: 8 rows of [bool x3] owned paints
+const SELECTED_PAINTS_KEY = 'kart_paint_selected'; // JSON: 8 ints 0..2
 const KART_VERSION = 'v1.0.9';
 const RAD2DEG = 180 / Math.PI;
 
@@ -141,6 +148,14 @@ export class KartGame extends Component {
     private _resultsT = 0;
     private _menuT = 0; // menu backdrop pan clock (raceTime is frozen in menu)
     private _bestTime = 0; // ms, 0 = none
+    // ---- Phase 2 step 3: progression state (loaded in start()) ----
+    private _coins = 0;
+    private _races = 0;
+    private _wins = 0;
+    private _ownedPaints: boolean[][] = [];
+    private _selectedPaints: number[] = [];
+    private _lastReward = 0; // coins earned in the last finished race
+    private _lastNewBest = false; // the last finish set a personal best
     private _frame: TrackFrame = {
         pos: new Vec3(), tangent: new Vec3(), right: new Vec3(), up: new Vec3(),
         half: 0, bank: 0, zone: 0, raceLat: 0,
@@ -176,6 +191,61 @@ export class KartGame extends Component {
         const f = sys.localStorage.getItem(this._bestKey(false));
         const r = sys.localStorage.getItem(this._bestKey(true));
         return { fwd: f ? parseInt(f, 10) || 0 : 0, rev: r ? parseInt(r, 10) || 0 : 0 };
+    }
+
+    // ---- Phase 2 step 3: progression (public state for the UI) ----
+    public get coins(): number { return this._coins; }
+    public get races(): number { return this._races; }
+    public get wins(): number { return this._wins; }
+    /** Coins earned in the last finished race (0 = none yet). */
+    public get lastReward(): number { return this._lastReward; }
+    /** The last finish set a personal best on that track + mode. */
+    public get lastNewBest(): boolean { return this._lastNewBest; }
+
+    /** Owned paints for a kart ([default, alt1, alt2]); default always owned. */
+    public paintsOwned(kartIdx: number): boolean[] {
+        if (kartIdx < 0 || kartIdx >= ROSTER.length) { return [true, false, false]; }
+        return this._ownedPaints[kartIdx].slice();
+    }
+
+    /** Selected paint index (0..2) for a kart. */
+    public selectedPaint(kartIdx: number): number {
+        if (kartIdx < 0 || kartIdx >= ROSTER.length) { return 0; }
+        return this._selectedPaints[kartIdx] || 0;
+    }
+
+    /** Tap a paint in the menu: owned -> select; locked + affordable ->
+     * buy + select; locked + too poor -> 'poor' (UI toasts). Menu-only:
+     * races never call it mid-race. */
+    public tapPaint(kartIdx: number, paintIdx: number): 'selected' | 'bought' | 'poor' | 'invalid' {
+        if (kartIdx < 0 || kartIdx >= ROSTER.length || paintIdx < 0 || paintIdx >= PAINTS[kartIdx].length) { return 'invalid'; }
+        const res = paintTapResult(this._coins, PAINTS[kartIdx][paintIdx].price, this._ownedPaints[kartIdx][paintIdx]);
+        if (res === 'poor') { return 'poor'; }
+        if (res === 'bought') {
+            this._coins -= PAINTS[kartIdx][paintIdx].price;
+            this._ownedPaints[kartIdx][paintIdx] = true;
+            sys.localStorage.setItem(COINS_KEY, String(this._coins));
+            sys.localStorage.setItem(PAINTS_KEY, JSON.stringify(this._ownedPaints));
+        }
+        this._selectedPaints[kartIdx] = paintIdx;
+        sys.localStorage.setItem(SELECTED_PAINTS_KEY, JSON.stringify(this._selectedPaints));
+        if (this._karts.length > 0) { this._rebuildKarts(); }
+        return res;
+    }
+
+    /** Paint scheme for a kart's selected paint, or null for the default. */
+    private _paintFor(kartIdx: number): PaintScheme | null {
+        if (kartIdx < 0 || kartIdx >= ROSTER.length) { return null; }
+        const sel = this._selectedPaints[kartIdx] || 0;
+        if (sel <= 0) { return null; }
+        return PAINTS[kartIdx][sel];
+    }
+
+    /** Non-negative int from storage, 0 on garbage / missing. */
+    private _loadInt(key: string): number {
+        const raw = sys.localStorage.getItem(key);
+        const n = raw ? parseInt(raw, 10) : 0;
+        return (isNaN(n) || n < 0) ? 0 : n;
     }
 
     /**
@@ -238,9 +308,11 @@ export class KartGame extends Component {
     }
 
     /** Build one kart entry (model + flame + grid placement + state).
-     * Used by start() and by _rebuildKarts() after a selection change. */
+     * Used by start() and by _rebuildKarts() after a selection change.
+     * The player kart uses the selected paint; AI karts always use
+     * their default paint. */
     private _makeKart(i: number, stats: typeof ROSTER[0]): KartState {
-        const model = buildKartModel(stats);
+        const model = buildKartModel(stats, i === 0 ? this._paintFor(this._kartIdx) : null);
         model.root.setParent(this._kartsRoot);
         // boost flame: orange cone + yellow core, tip pointing backwards
         // (-Z). Built once per kart, toggled while boostTime > 0.
@@ -328,6 +400,13 @@ export class KartGame extends Component {
         // grid order: the saved pick drives karts[0] (the player), the
         // other 7 follow in roster order — no AI duplicates the pick.
         this._kartIdx = this._loadKartIdx();
+        // Phase 2 step 3: progression state (before the karts are built,
+        // so the player's selected paint applies from the first frame).
+        this._coins = this._loadInt(COINS_KEY);
+        this._races = this._loadInt(RACES_KEY);
+        this._wins = this._loadInt(WINS_KEY);
+        this._ownedPaints = parseOwnedPaints(sys.localStorage.getItem(PAINTS_KEY));
+        this._selectedPaints = parseSelectedPaints(sys.localStorage.getItem(SELECTED_PAINTS_KEY));
         const order = rosterOrder(this._kartIdx);
         for (let i = 0; i < KartConstants.RACER_COUNT; i++) {
             const ks = this._makeKart(i, ROSTER[order[i]]);
@@ -479,6 +558,8 @@ export class KartGame extends Component {
         this._resultsShown = false;
         this._resultsT = 0;
         this._lastPos = 0;
+        this._lastReward = 0;
+        this._lastNewBest = false;
         this.state = 'countdown';
         this._startRaceAudio();
         if (this.ui) { this.ui.showMenu(false); this.ui.showResults(null); this.ui.showHud(false); this.ui.showPause(false); }
@@ -783,10 +864,23 @@ export class KartGame extends Component {
                 k.finishTime = this._raceTime;
                 if (isPlayer) {
                     const ms = Math.round(this._raceTime * 1000);
-                    if (this._bestTime === 0 || ms < this._bestTime) {
+                    const isNewBest = this._bestTime === 0 || ms < this._bestTime;
+                    if (isNewBest) {
                         this._bestTime = ms;
                         sys.localStorage.setItem(this._bestKey(this._reverse), String(ms));
                     }
+                    // Phase 2 step 3: race rewards — position coins + a
+                    // new-best bonus; races/wins counters. Saved at once,
+                    // shown on the results panel (UI reads lastReward).
+                    const pos = this._rankOf(k);
+                    this._lastReward = rewardForFinish(pos, isNewBest);
+                    this._lastNewBest = isNewBest;
+                    this._coins += this._lastReward;
+                    this._races += 1;
+                    if (pos === 1) { this._wins += 1; }
+                    sys.localStorage.setItem(COINS_KEY, String(this._coins));
+                    sys.localStorage.setItem(RACES_KEY, String(this._races));
+                    sys.localStorage.setItem(WINS_KEY, String(this._wins));
                     if (this.ui) { this.ui.showToast('🏁 完赛！'); }
                 }
             }
