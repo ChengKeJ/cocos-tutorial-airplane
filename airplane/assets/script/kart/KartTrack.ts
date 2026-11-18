@@ -12,6 +12,15 @@
  * rocks, tunnel / rock arch, bridge, start gantry, boost pads) — no art
  * assets, no Three.js, no DOM.
  *
+ * AAA visual rework (2026-11-18): the same centreline and gameplay, but
+ * the look is rebuilt to match the AAA karts — cute chunky low-poly +
+ * glossy PBR hero surfaces (road, curbs, sea, boost pads, gantry) via a
+ * local StdBuilder (MeshBuilder is untouched), a gradient sky dome + sun
+ * ball per track (the scene has no skybox), two-tier rolling ground,
+ * detailed trees / houses / boards / mountains / tunnel portals / a
+ * suspension bridge, and a checkered finish line. All procedural and
+ * original — no copied assets or textures.
+ *
  * Arcade model: a kart's state is (s = metres along the centreline,
  * d = lateral offset from it). sampleAt(s) returns the interpolated
  * frame {pos, tangent, right, up, half, bank, zone, raceLat}.
@@ -71,6 +80,21 @@ export interface TrackDef {
     rock: number;
     tunnelRock: number; // portals + roof (tunnel / rock arch)
     cloud: number;
+    // ---- AAA theme additions (visuals only) ----
+    sky: number[]; // gradient dome bands, horizon -> zenith (5)
+    sunDisc: number; // sun ball colour
+    sunHalo: number; // halo ball colour (behind the disc)
+    sunAzimDeg: number; // sun azimuth (deg, atan2-style in XZ)
+    sunElevDeg: number; // sun elevation (deg)
+    roadAlt: number; // second asphalt tone (alternating 8 m strips)
+    shoulder: number; // paved shoulder outside the edge lines
+    curbA: number; curbB: number; // alternating curb blocks
+    waterRough: number; // PBR roughness of the water / lake-bed plane
+    door: number; // house door colour
+    windowLit: number; // lit window colour
+    strata: number; // mesa strata band colour
+    tuft: number; // grass / sand tuft colour
+    pond?: number; // oasis pond colour (canyon only)
     // ---- scenery feature ranges (fractions of lap; omit if absent) ----
     villageT?: [number, number]; // houses / huts
     cliffT?: [number, number]; // rocks
@@ -128,16 +152,16 @@ const TRACK_SUNSET: TrackDef = {
         [0.893, -5], [0.925, -3], [0.958, -6], [0.985, -2],
     ],
     zones: [
-        { t0: 0.000, name: '起点', ground: 0x5a9448 },
-        { t0: 0.100, name: '海港', ground: 0x5a9448 },
-        { t0: 0.220, name: '村庄', ground: 0x7a9a58, kind: 'village' },
-        { t0: 0.380, name: '悬崖', ground: 0x8a7a68, kind: 'cliff' },
+        { t0: 0.000, name: '起点', ground: 0x62a04e },
+        { t0: 0.100, name: '海港', ground: 0x62a04e },
+        { t0: 0.220, name: '村庄', ground: 0x86a860, kind: 'village' },
+        { t0: 0.380, name: '悬崖', ground: 0x9a8a72, kind: 'cliff' },
         { t0: 0.521, name: '隧道', ground: 0x555560, kind: 'tunnel' },
-        { t0: 0.600, name: '沙滩', ground: 0xd8c28a },
-        { t0: 0.740, name: '弯道', ground: 0x5a9448 },
-        { t0: 0.860, name: '引桥', ground: 0x5a9448 },
-        { t0: 0.893, name: '大桥', ground: 0x5a9448, kind: 'bridge' },
-        { t0: 0.950, name: '回程', ground: 0x5a9448 },
+        { t0: 0.600, name: '沙滩', ground: 0xe0c98f },
+        { t0: 0.740, name: '弯道', ground: 0x62a04e },
+        { t0: 0.860, name: '引桥', ground: 0x62a04e },
+        { t0: 0.893, name: '大桥', ground: 0x62a04e, kind: 'bridge' },
+        { t0: 0.950, name: '回程', ground: 0x62a04e },
     ],
     boostPads: [
         { t0: 0.5380, t1: 0.5555, lat: -2.9, hw: 1.9 },
@@ -146,19 +170,33 @@ const TRACK_SUNSET: TrackDef = {
         { t0: 0.9575, t1: 0.9740, lat: -3.1, hw: 2.2 },
         { t0: 0.9575, t1: 0.9740, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x3a3f4a,
-    water: 0x3f8cc8,
+    road: 0x40434e,
+    roadAlt: 0x464a56,
+    shoulder: 0x2e3138,
+    curbA: 0xe63946,
+    curbB: 0xf5f0e6,
+    water: 0x2f7fc4,
+    waterRough: 0.12,
     treeKind: 'pine',
     treeLeaf: [0x34823e, 0x3f9a4a],
     treeTrunk: 0x6e5234,
     houseWall: 0xe8d6b4,
     houseRoof: 0xac543e,
     houseRoofKind: 'cone',
+    door: 0x5a3a28,
+    windowLit: 0xffd97a,
     mountain: [0x5a6a7a, 0x4a6a52],
     mountainKind: 'cone',
     rock: 0x807a74,
     tunnelRock: 0x464650,
     cloud: 0xffffff,
+    sky: [0xffb347, 0xff9e7d, 0xf78fb8, 0xc9a6e8, 0x7ec8f0],
+    sunDisc: 0xfff3b0,
+    sunHalo: 0xffc98a,
+    sunAzimDeg: -90,
+    sunElevDeg: 10,
+    strata: 0x8a9aa8,
+    tuft: 0x4a7a3a,
     villageT: [0.225, 0.375],
     cliffT: [0.385, 0.515],
     tunnelT: [0.521, 0.599],
@@ -210,15 +248,15 @@ const TRACK_CANYON: TrackDef = {
         [0.900, -3], [0.950, -2],
     ],
     zones: [
-        { t0: 0.000, name: '起点', ground: 0xd8b078 },
+        { t0: 0.000, name: '起点', ground: 0xdfb47e },
         { t0: 0.100, name: '沙漠', ground: 0xdcb47e },
         { t0: 0.250, name: '岩门', ground: 0xc08a5a, kind: 'cliff' },
         { t0: 0.360, name: '岩拱', ground: 0xb0704a, kind: 'tunnel' },
         { t0: 0.430, name: '峡谷', ground: 0xb0704a, kind: 'cliff' },
-        { t0: 0.520, name: '沙丘', ground: 0xe0c090 },
-        { t0: 0.660, name: '绿洲', ground: 0x8a9a58, kind: 'village' },
+        { t0: 0.520, name: '沙丘', ground: 0xe6c795 },
+        { t0: 0.660, name: '绿洲', ground: 0x7fae62, kind: 'village' },
         { t0: 0.780, name: '台地', ground: 0xc08a5a },
-        { t0: 0.900, name: '回程', ground: 0xd8b078 },
+        { t0: 0.900, name: '回程', ground: 0xdfb47e },
     ],
     boostPads: [
         { t0: 0.3350, t1: 0.3520, lat: -2.9, hw: 1.9 },
@@ -227,19 +265,34 @@ const TRACK_CANYON: TrackDef = {
         { t0: 0.9050, t1: 0.9220, lat: -3.1, hw: 2.2 },
         { t0: 0.9050, t1: 0.9220, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x463832,
+    road: 0x4a3a30,
+    roadAlt: 0x524138,
+    shoulder: 0x3a2d24,
+    curbA: 0xd94f30,
+    curbB: 0xf5ead6,
     water: 0xe8d0a0, // dry lake bed (sand), not sea
+    waterRough: 1.0,
     treeKind: 'cactus',
     treeLeaf: [0x3d8a4a, 0x4a9a55],
     treeTrunk: 0x3d8a4a,
     houseWall: 0xe0c090, // adobe
     houseRoof: 0xb0703a, // terracotta flat roof
     houseRoofKind: 'flat',
+    door: 0x6e4a2a,
+    windowLit: 0xffd97a,
     mountain: [0xa85a34, 0x8a4a2c],
     mountainKind: 'mesa',
     rock: 0x9a5f38,
     tunnelRock: 0x9a5f38, // natural rock arch, sandstone
     cloud: 0xffffff,
+    sky: [0xffe3a3, 0xffd28a, 0xf7b98a, 0xa8d4ee, 0x6fb7e8],
+    sunDisc: 0xfff8d8,
+    sunHalo: 0xffe9b0,
+    sunAzimDeg: -60,
+    sunElevDeg: 26,
+    strata: 0xc98a5e,
+    tuft: 0xc9a86a,
+    pond: 0x3f9ec4,
     villageT: [0.665, 0.775],
     cliffT: [0.250, 0.520],
     rockBothSides: true,
@@ -714,48 +767,55 @@ export class KartTrack {
     public buildWorld(parent: Node): void {
         const cl = this._cl;
         const builder = new MeshBuilder();
+        const std = new StdBuilder();
+        const f = this._frame;
 
-        // --- road ribbon: 3 verts per ring (left, crown, right), every 2 m ---
-        const ROAD = this.def.road;
+        // --- road ribbon (PBR asphalt): 3 verts per ring (left, crown,
+        // right), every 2 m. Two subtly alternating 8 m tones so the
+        // tarmac reads as laid strips, not one flat slab. Per-quad verts
+        // (rings duplicated at tone boundaries) keep the two tones in
+        // separate PBR buckets.
+        // NOTE: frame.right = tangent x up points to the kart's LEFT in
+        // this right-handed layout, so the ring order runs right-to-left
+        // as seen from above — the winding below is the one whose
+        // geometric normal points UP (+Y); the opposite order is
+        // backface-culled and the road is invisible (found 2026-11-17).
         const ringStep = 4; // stations
         const rings = Math.floor(cl.count / ringStep);
-        const roadPos: number[] = [];
-        const roadNor: number[] = [];
-        const roadUv: number[] = [];
-        const roadIdx: number[] = [];
-        const f = this._frame;
-        for (let r = 0; r <= rings; r++) {
-            // last ring closes the loop exactly on ring 0's station
-            const i = r === rings ? 0 : (r * ringStep) % cl.count;
-            const s = i * cl.ds;
-            this.sampleAt(s, f);
+        const roadPos: number[][] = [[], []];
+        const roadNor: number[][] = [[], []];
+        const roadUv: number[][] = [[], []];
+        const roadIdx: number[][] = [[], []];
+        const pushRing = (i: number, P: number[], N: number[], U: number[]): void => {
+            this.sampleAt(i * cl.ds, f);
             const hw = f.half;
-            // left, centre (+crown), right
             const lats = [-hw, 0, hw];
             const lifts = [0, 0.09, 0];
             for (let k = 0; k < 3; k++) {
-                roadPos.push(
+                P.push(
                     f.pos.x + f.right.x * lats[k] + f.up.x * lifts[k],
                     f.pos.y + f.right.y * lats[k] + f.up.y * lifts[k],
                     f.pos.z + f.right.z * lats[k] + f.up.z * lifts[k]);
-                roadNor.push(f.up.x, f.up.y, f.up.z);
-                roadUv.push(k * 0.5, s * 0.1);
+                N.push(f.up.x, f.up.y, f.up.z);
+                U.push(k * 0.5, i * cl.ds * 0.1);
             }
-        }
+        };
         for (let r = 0; r < rings; r++) {
-            const a = r * 3, b = (r + 1) * 3;
-            // NOTE: frame.right = tangent x up points to the kart's LEFT in
-            // this right-handed layout, so the ring order runs right-to-left
-            // as seen from above — the winding below is the one whose
-            // geometric normal points UP (+Y); the opposite order is
-            // backface-culled and the road is invisible (found 2026-11-17).
-            roadIdx.push(a, a + 1, b, a + 1, b + 1, b);
-            roadIdx.push(a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);
+            const tone = Math.floor(r / 4) % 2;
+            const P = roadPos[tone], N = roadNor[tone], U = roadUv[tone], I = roadIdx[tone];
+            const base = P.length / 3;
+            const i0 = (r * ringStep) % cl.count;
+            const i1 = r === rings - 1 ? 0 : ((r + 1) * ringStep) % cl.count;
+            pushRing(i0, P, N, U);
+            pushRing(i1, P, N, U);
+            I.push(base, base + 1, base + 3, base + 1, base + 4, base + 3);
+            I.push(base + 1, base + 2, base + 4, base + 2, base + 5, base + 4);
         }
-        builder.addGeometry(ROAD, roadPos, roadNor, roadUv, roadIdx);
+        std.addGeometry(this.def.road, roadPos[0], roadNor[0], roadUv[0], roadIdx[0], 0, 0.9);
+        std.addGeometry(this.def.roadAlt, roadPos[1], roadNor[1], roadUv[1], roadIdx[1], 0, 0.9);
 
         // --- white edge lines: thin ribbons just inside each road edge ---
-        const EDGE = 0xf2f2f2;
+        const EDGE = 0xffffff; // shares the white bucket (clouds / snow / boards)
         const edgePos: number[] = [];
         const edgeNor: number[] = [];
         const edgeUv: number[] = [];
@@ -781,6 +841,68 @@ export class KartTrack {
         }
         builder.addGeometry(EDGE, edgePos, edgeNor, edgeUv, edgeIdx);
 
+        // --- asphalt shoulder: dark strip outside the edge lines, just
+        // below the curb, so the road has a paved margin before the grass.
+        const shPos: number[] = [];
+        const shNor: number[] = [];
+        const shUv: number[] = [];
+        const shIdx: number[] = [];
+        for (let r = 0; r <= rings; r++) {
+            const i = r === rings ? 0 : (r * ringStep) % cl.count;
+            this.sampleAt(i * cl.ds, f);
+            const hw = f.half;
+            const lats = [-(hw + 2.2), -(hw + 0.9), hw + 0.9, hw + 2.2];
+            for (let k = 0; k < 4; k++) {
+                shPos.push(
+                    f.pos.x + f.right.x * lats[k] + f.up.x * -0.02,
+                    f.pos.y + f.right.y * lats[k] + f.up.y * -0.02,
+                    f.pos.z + f.right.z * lats[k] + f.up.z * -0.02);
+                shNor.push(f.up.x, f.up.y, f.up.z);
+                shUv.push(0, 0);
+            }
+        }
+        for (let r = 0; r < rings; r++) {
+            const a = r * 4, b = (r + 1) * 4;
+            shIdx.push(a, a + 1, b, a + 1, b + 1, b);
+            shIdx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);
+        }
+        std.addGeometry(this.def.shoulder, shPos, shNor, shUv, shIdx, 0, 0.95);
+
+        // --- red/white curbs: raised 0.8 m strips just outside the edge
+        // lines, alternating 8 m blocks (glossy painted concrete). Top
+        // face only — the step down to the shoulder reads as the curb
+        // edge from the chase cam. Verts are ordered by increasing lat
+        // per side so the winding matches the road's.
+        const curbPos: number[][] = [[], []];
+        const curbNor: number[][] = [[], []];
+        const curbUv: number[][] = [[], []];
+        const curbIdx: number[][] = [[], []];
+        const curbQuads = Math.floor(rings / 2) + 1;
+        for (let k = 0; k < curbQuads - 1; k++) {
+            const tone = Math.floor(k / 2) % 2;
+            const P = curbPos[tone], N = curbNor[tone], U = curbUv[tone], I = curbIdx[tone];
+            const base = P.length / 3;
+            for (const rr of [2 * k, 2 * k + 2]) {
+                const i = ((rr % rings) * ringStep) % cl.count;
+                this.sampleAt(i * cl.ds, f);
+                const hw = f.half;
+                // left outer, left inner, right inner, right outer
+                const lats = [-(hw + 0.9), -(hw + 0.1), hw + 0.1, hw + 0.9];
+                for (let m = 0; m < 4; m++) {
+                    P.push(
+                        f.pos.x + f.right.x * lats[m] + f.up.x * 0.14,
+                        f.pos.y + f.right.y * lats[m] + f.up.y * 0.14,
+                        f.pos.z + f.right.z * lats[m] + f.up.z * 0.14);
+                    N.push(f.up.x, f.up.y, f.up.z);
+                    U.push(0, 0);
+                }
+            }
+            I.push(base, base + 1, base + 4, base + 1, base + 5, base + 4);
+            I.push(base + 2, base + 3, base + 6, base + 3, base + 7, base + 6);
+        }
+        std.addGeometry(this.def.curbA, curbPos[0], curbNor[0], curbUv[0], curbIdx[0], 0.1, 0.35);
+        std.addGeometry(this.def.curbB, curbPos[1], curbNor[1], curbUv[1], curbIdx[1], 0.1, 0.35);
+
         // --- ground skirt: per-zone ribbons beside the road (closed loop) ---
         const skirtStep = 8;
         const skirtRings = Math.floor(cl.count / skirtStep);
@@ -797,10 +919,22 @@ export class KartTrack {
             const nor: number[] = [];
             const uv: number[] = [];
             const idx: number[] = [];
+            // outer tier: a second, darker ribbon out to 70 m whose far
+            // edge rolls gently (integer-frequency sines of lap fraction,
+            // so the loop closes) — the world no longer ends in a hard
+            // colour seam 26 m from the road. Its inner edge sits exactly
+            // on the inner tier (-0.25) so no step opens at the join.
+            const oPos: number[] = [];
+            const oNor: number[] = [];
+            const oUv: number[] = [];
+            const oIdx: number[] = [];
             for (let r = r0; r <= r1; r++) {
                 const i = skirtStation(r);
                 this.sampleAt(i * cl.ds, f);
                 const hw = f.half;
+                const t = i / cl.count;
+                const und = 0.9 + 0.7 * Math.sin(t * Math.PI * 2 * 3 + 1.3)
+                    + 0.5 * Math.sin(t * Math.PI * 2 * 7 + 0.5);
                 const lats = [-(hw + 26), -(hw + 0.4), hw + 0.4, hw + 26];
                 for (let k = 0; k < 4; k++) {
                     pos.push(
@@ -810,14 +944,27 @@ export class KartTrack {
                     nor.push(f.up.x, f.up.y, f.up.z);
                     uv.push(0, 0);
                 }
+                const oLats = [-(hw + 70), -(hw + 26), hw + 26, hw + 70];
+                const oLifts = [-0.25 - und, -0.25, -0.25, -0.25 - und];
+                for (let k = 0; k < 4; k++) {
+                    oPos.push(
+                        f.pos.x + f.right.x * oLats[k] + f.up.x * oLifts[k],
+                        f.pos.y + f.right.y * oLats[k] + f.up.y * oLifts[k],
+                        f.pos.z + f.right.z * oLats[k] + f.up.z * oLifts[k]);
+                    oNor.push(f.up.x, f.up.y, f.up.z);
+                    oUv.push(0, 0);
+                }
             }
             const n = r1 - r0;
             for (let r = 0; r < n; r++) {
                 const a = r * 4, b = (r + 1) * 4;
                 idx.push(a, a + 1, b, a + 1, b + 1, b);
                 idx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);
+                oIdx.push(a, a + 1, b, a + 1, b + 1, b);
+                oIdx.push(a + 2, a + 3, b + 2, a + 3, b + 3, b + 2);
             }
             builder.addGeometry(ground, pos, nor, uv, idx);
+            builder.addGeometry(shade(ground, 0.78), oPos, oNor, oUv, oIdx);
         };
         for (let r = 1; r <= skirtRings; r++) {
             // runs overlap by one ring so no slit opens at a zone boundary
@@ -829,14 +976,19 @@ export class KartTrack {
         }
         flushSkirt(runStart, skirtRings, runZone);
 
-        // --- water: one big flat box under everything ---
+        // --- water: one big flat box under everything. PBR: glossy on
+        // the coast (sun glint on the sea), matte sand on the dry lake.
         const c = this.centroid(_v1);
-        builder.addBox(this.def.water, _v2.set(c.x, 0.3, c.z), 0, 1400, 0.4, 1400);
+        std.addBox(this.def.water, _v2.set(c.x, 0.3, c.z), 0, 1400, 0.4, 1400, 0.05, this.def.waterRough);
 
         // --- scenery: trees, houses, rocks, tunnel, bridge, gantry, pads ---
-        this._buildScenery(builder);
+        this._buildScenery(builder, std);
+
+        // --- sky dome + sun ball (the scene has no skybox; see _buildSky) ---
+        this._buildSky(builder);
 
         builder.build(parent);
+        std.build(parent);
     }
 
     /** Zone kind at lap fraction t (for scenery skips). */
@@ -847,15 +999,18 @@ export class KartTrack {
         return zones[zi].kind || 'normal';
     }
 
-    private _buildScenery(b: MeshBuilder): void {
+    private _buildScenery(b: MeshBuilder, sb: StdBuilder): void {
         const cl = this._cl;
         const rnd = mulberry32(this.def.seed);
         const f = this._frame;
         const pos = new Vec3();
+        const ctr = this.centroid(new Vec3());
+        const isCanyon = this.def.id === 'canyon';
 
-        // trees: every ~10 m, both sides, skipping tunnel + bridge.
-        // Pass B: bigger + closer + denser — the old trees (scale 0.8-1.5,
-        // 7-25 m off the road) never read in screenshots.
+        // trees: every ~10 m, one side, skipping tunnel + bridge.
+        // Chunky two-tier pines (or round broadleafs near the village)
+        // and saguaros + barrel cacti in the canyon — the old single
+        // cone never read at speed.
         for (let s = 8; s < this.length; s += 10) {
             const t = s / this.length;
             const zk = this._zoneKindAt(t);
@@ -867,26 +1022,56 @@ export class KartTrack {
             const y = pos.y - 0.25;
             const sc = 1.3 + rnd() * 0.9;
             if (this.def.treeKind === 'cactus') {
-                // saguaro: main column + two arms (box arm + upright tip)
-                const colH = 4.6 * sc;
-                b.addCylinder(this.def.treeLeaf[0], new Vec3(pos.x, y + colH / 2, pos.z), 0, 0.5 * sc, 0.55 * sc, colH);
-                for (const armSide of [-1, 1]) {
-                    if (rnd() < 0.3) { continue; }
-                    const armY = y + colH * (0.45 + rnd() * 0.2);
-                    b.addBox(this.def.treeLeaf[1],
-                        new Vec3(pos.x + armSide * 1.0 * sc, armY, pos.z), 0, 1.6 * sc, 0.55 * sc, 0.55 * sc);
-                    b.addCylinder(this.def.treeLeaf[1],
-                        new Vec3(pos.x + armSide * 1.7 * sc, armY + 0.75 * sc, pos.z), 0, 0.27 * sc, 0.27 * sc, 1.5 * sc);
+                if (rnd() < 0.3) {
+                    // barrel cactus: squat drum + domed top
+                    b.addCylinder(this.def.treeLeaf[1], new Vec3(pos.x, y + 0.7 * sc, pos.z), 0, 0.95 * sc, 1.05 * sc, 1.4 * sc);
+                    b.addSphere(this.def.treeLeaf[0], new Vec3(pos.x, y + 1.45 * sc, pos.z), 0, 0.9 * sc, 0.45 * sc, 0.9 * sc);
+                } else {
+                    // saguaro: main column + two arms (box arm + upright tip)
+                    const colH = 4.6 * sc;
+                    b.addCylinder(this.def.treeLeaf[0], new Vec3(pos.x, y + colH / 2, pos.z), 0, 0.5 * sc, 0.55 * sc, colH);
+                    for (const armSide of [-1, 1]) {
+                        if (rnd() < 0.3) { continue; }
+                        const armY = y + colH * (0.45 + rnd() * 0.2);
+                        b.addBox(this.def.treeLeaf[1],
+                            new Vec3(pos.x + armSide * 1.0 * sc, armY, pos.z), 0, 1.6 * sc, 0.55 * sc, 0.55 * sc);
+                        b.addCylinder(this.def.treeLeaf[1],
+                            new Vec3(pos.x + armSide * 1.7 * sc, armY + 0.75 * sc, pos.z), 0, 0.27 * sc, 0.27 * sc, 1.5 * sc);
+                    }
                 }
             } else {
                 const trunkH = 2.4 * sc;
                 b.addCylinder(this.def.treeTrunk, new Vec3(pos.x, y + trunkH / 2, pos.z), 0, 0.3 * sc, 0.42 * sc, trunkH);
                 const fol = rnd() < 0.5 ? this.def.treeLeaf[0] : this.def.treeLeaf[1];
-                b.addCone(fol, new Vec3(pos.x, y + trunkH + 2.4 * sc, pos.z), 0, 2.3 * sc, 5.2 * sc, 10);
+                if (rnd() < 0.25) {
+                    // round broadleaf: lollipop canopy
+                    b.addSphere(fol, new Vec3(pos.x, y + trunkH + 1.6 * sc, pos.z), 0, 2.2 * sc, 1.8 * sc, 2.2 * sc);
+                } else {
+                    // chunky two-tier pine
+                    b.addCone(fol, new Vec3(pos.x, y + trunkH + 1.7 * sc, pos.z), 0, 2.4 * sc, 3.6 * sc, 8);
+                    b.addCone(fol, new Vec3(pos.x, y + trunkH + 3.9 * sc, pos.z), 0, 1.6 * sc, 3.0 * sc, 8);
+                }
             }
         }
 
-        // houses / huts in the village zone, both sides every ~22 m
+        // grass / sand tufts scattered on the skirt so the ground is not
+        // one flat colour field. Skipping tunnel + bridge.
+        for (let s = 5; s < this.length; s += 15) {
+            const t = s / this.length;
+            const zk = this._zoneKindAt(t);
+            if (zk === 'tunnel' || zk === 'bridge') { continue; }
+            this.sampleAt(s, f);
+            const side = rnd() < 0.5 ? -1 : 1;
+            const lat = side * (f.half + 3 + rnd() * 18);
+            this.posAt(s, lat, pos);
+            const sc = 0.7 + rnd() * 0.7;
+            b.addCone(this.def.tuft, new Vec3(pos.x, pos.y - 0.25 + 0.45 * sc, pos.z), 0, 0.55 * sc, 0.9 * sc, 5);
+        }
+
+        // houses / huts in the village zone, both sides every ~22 m.
+        // Now with a door + lit windows on the road-facing wall, a
+        // chimney through the cone roof (coast) or a roof water tank
+        // (adobe huts) — the old bare boxes read as placeholders.
         if (this.def.villageT) {
             const [v0, v1] = this.def.villageT;
             for (let s = v0 * this.length; s < v1 * this.length; s += 22) {
@@ -899,18 +1084,35 @@ export class KartTrack {
                     const yaw = Math.atan2(f.tangent.x, f.tangent.z) + (rnd() - 0.5) * 0.3;
                     b.addBox(this.def.houseWall, new Vec3(pos.x, y + 2.2, pos.z), yaw, 7.5, 4.4, 6.5);
                     if (this.def.houseRoofKind === 'flat') {
-                        // adobe hut: flat terracotta roof slab
+                        // adobe hut: flat terracotta roof slab + water tank
                         b.addBox(this.def.houseRoof, new Vec3(pos.x, y + 4.55, pos.z), yaw, 8.1, 0.5, 7.1);
+                        b.addCylinder(this.def.houseRoof,
+                            new Vec3(pos.x + f.right.x * 2.0, y + 5.3, pos.z + f.right.z * 2.0), 0, 0.7, 0.7, 1.1);
                     } else {
                         b.addCone(this.def.houseRoof, new Vec3(pos.x, y + 4.4 + 1.4, pos.z), yaw + Math.PI / 4, 5.2, 2.8, 4);
+                        // chimney poking through the roof slope
+                        b.addBox(this.def.houseWall,
+                            new Vec3(pos.x + f.tangent.x * 1.8 + f.right.x * 1.5, y + 6.0, pos.z + f.tangent.z * 1.8 + f.right.z * 1.5),
+                            yaw, 0.9, 2.4, 0.9);
+                    }
+                    // door + lit windows on the road-facing wall (the
+                    // local +/-X face: the house's width runs along its
+                    // right, and the road sits at -side * right).
+                    const wx = -side * f.right.x * 3.78, wz = -side * f.right.z * 3.78;
+                    b.addBox(this.def.door, new Vec3(pos.x + wx, y + 1.1, pos.z + wz), yaw, 0.2, 2.2, 1.4);
+                    for (const wside of [-1, 1]) {
+                        b.addBox(this.def.windowLit,
+                            new Vec3(pos.x + wx + f.tangent.x * wside * 2.0, y + 2.6, pos.z + wz + f.tangent.z * wside * 2.0),
+                            yaw, 0.2, 1.0, 1.1);
                     }
                 }
             }
         }
 
         // trackside boards: every ~60 m, alternating sides, face the road.
-        // Skipping tunnel + bridge (no room there). Bright colours so they
-        // read at speed — they are the cheapest "big race" signal.
+        // Skipping tunnel + bridge (no room there). Now framed: a white
+        // backing board + the coloured face + a white top stripe — the
+        // cheapest "big race" signal, and it finally looks printed.
         const BOARD_COLS = [0xe63946, 0x2a9d8f, 0xf4a261, 0x4361ee, 0x9b5de5, 0xf15bb5];
         let bi = 0;
         for (let s = 30; s < this.length; s += 60) {
@@ -923,8 +1125,13 @@ export class KartTrack {
             this.posAt(s, lat, pos);
             const y = pos.y - 0.25;
             const yaw = Math.atan2(f.tangent.x, f.tangent.z) + Math.PI / 2;
+            const nx = -side * f.right.x, nz = -side * f.right.z; // toward the road
             b.addBox(0x2b2b30, new Vec3(pos.x, y + 1.2, pos.z), yaw, 0.35, 2.4, 0.35);
-            b.addBox(BOARD_COLS[bi % BOARD_COLS.length], new Vec3(pos.x, y + 3.4, pos.z), yaw, 4.6, 1.9, 0.25);
+            b.addBox(0xffffff, new Vec3(pos.x, y + 3.4, pos.z), yaw, 5.2, 2.5, 0.18);
+            b.addBox(BOARD_COLS[bi % BOARD_COLS.length],
+                new Vec3(pos.x + nx * 0.12, y + 3.4, pos.z + nz * 0.12), yaw, 4.6, 1.9, 0.25);
+            b.addBox(0xffffff,
+                new Vec3(pos.x + nx * 0.14, y + 4.15, pos.z + nz * 0.14), yaw, 4.6, 0.28, 0.28);
             bi++;
         }
 
@@ -941,9 +1148,10 @@ export class KartTrack {
         // wide enough to overlap its neighbours (mesas), so the horizon
         // reads as continuous rock/forest and no shape ever touches the
         // road. Layout, checkpoints, pads and zones are untouched.
+        // New: snow caps on the tall coastal cones, a lighter strata band
+        // around each mesa.
         const isMesa = this.def.mountainKind === 'mesa';
         const ringN = isMesa ? 14 : 10;
-        const cc = this.centroid(new Vec3());
         for (let i = 0; i < ringN; i++) {
             const ang = (i / ringN) * Math.PI * 2 + rnd() * 0.3;
             const h = 70 + rnd() * 80;
@@ -954,24 +1162,35 @@ export class KartTrack {
             // disc spans ~±0.5 rad as seen from the centroid, so the
             // window covers it; cones are seated the same way, which also
             // clears them at ground level where they are widest).
-            const r = this._roadExtentAt(cc, ang, 0.7) + base + 40;
-            const mx = cc.x + Math.cos(ang) * r, mz = cc.z + Math.sin(ang) * r;
+            const r = this._roadExtentAt(ctr, ang, 0.7) + base + 40;
+            const mx = ctr.x + Math.cos(ang) * r, mz = ctr.z + Math.sin(ang) * r;
             if (isMesa) {
-                // flat-topped mesa: wide cylinder + a smaller cap rock
+                // flat-topped mesa: wide cylinder + lighter strata band + cap rock
                 b.addCylinder(col, new Vec3(mx, h / 2 - 0.5, mz), 0, base * 0.95, base, h);
+                b.addCylinder(this.def.strata, new Vec3(mx, h * 0.45, mz), 0, base * 0.99, base * 0.99, 9);
                 b.addCylinder(col, new Vec3(mx, h - 0.5 + 8, mz), 0, base * 0.55, base * 0.6, 16);
             } else {
                 b.addCone(col, new Vec3(mx, h / 2 - 0.5, mz), 0, base, h, 6);
+                if (h > 95) {
+                    const capH = h * 0.36;
+                    b.addCone(0xffffff, new Vec3(mx, h - 0.5 - capH / 2, mz), 0, base * 0.36, capH, 6);
+                }
             }
         }
 
-        // clouds: flattened white spheres high up, scattered over the map
+        // clouds: clusters of three flattened spheres (a big puff + two
+        // small ones) high up, scattered over the map. On the coast every
+        // third cloud is sunset-tinted peach.
         for (let i = 0; i < 12; i++) {
             const ang = rnd() * Math.PI * 2;
             const r = 120 + rnd() * 260;
-            b.addSphere(this.def.cloud,
-                new Vec3(cc.x + Math.cos(ang) * r, 65 + rnd() * 30, cc.z + Math.sin(ang) * r),
-                0, 18 + rnd() * 14, 4 + rnd() * 3, 12 + rnd() * 8);
+            const cy = 65 + rnd() * 30;
+            const cx = ctr.x + Math.cos(ang) * r, cz = ctr.z + Math.sin(ang) * r;
+            const col = (!isCanyon && i % 3 === 0) ? 0xffd9c0 : this.def.cloud;
+            const s0 = 18 + rnd() * 14;
+            b.addSphere(col, new Vec3(cx, cy, cz), 0, s0, 4 + rnd() * 3, 12 + rnd() * 8);
+            b.addSphere(col, new Vec3(cx - s0 * 0.9, cy - 1, cz + 2), 0, s0 * 0.6, 3 + rnd() * 2, 8 + rnd() * 4);
+            b.addSphere(col, new Vec3(cx + s0 * 0.9, cy - 1, cz - 2), 0, s0 * 0.55, 3 + rnd() * 2, 7 + rnd() * 4);
         }
 
         // dashed centre line: yellow dashes every 6 m so speed reads on
@@ -985,7 +1204,8 @@ export class KartTrack {
             b.addBox(0xf5d020, new Vec3(px, py, pz), yaw, 0.3, 0.06, 2.5);
         }
 
-        // rocks on the cliff side(s)
+        // rocks on the cliff side(s): chunky boulders in two tones, some
+        // with a smaller cap stone.
         if (this.def.cliffT) {
             const [c0, c1] = this.def.cliffT;
             const sides = this.def.rockBothSides ? [-1, 1] : [-1];
@@ -995,12 +1215,20 @@ export class KartTrack {
                     const lat = side * (f.half + 3 + rnd() * 6);
                     this.posAt(s, lat, pos);
                     const sc = 1.5 + rnd() * 2.5;
-                    b.addSphere(this.def.rock, new Vec3(pos.x, pos.y - 0.25 + sc * 0.4, pos.z), 0, sc, sc * 0.7, sc);
+                    const tone = rnd() < 0.5 ? this.def.rock : shade(this.def.rock, 0.82);
+                    b.addSphere(tone, new Vec3(pos.x, pos.y - 0.25 + sc * 0.4, pos.z), 0, sc, sc * 0.7, sc);
+                    if (rnd() < 0.4) {
+                        b.addSphere(shade(this.def.rock, 0.82),
+                            new Vec3(pos.x + sc * 0.5, pos.y - 0.25 + sc * 0.9, pos.z), 0, sc * 0.45, sc * 0.35, sc * 0.45);
+                    }
                 }
             }
         }
 
-        // tunnel portals + roof segments (rock arch on the canyon track)
+        // tunnel portals + roof segments (rock arch on the canyon track).
+        // The roof run is unchanged; each end now gets a proper portal
+        // frame — light stone columns + a beam (chevron-striped on the
+        // coast, plain light sandstone on the arch).
         if (this.def.tunnelT) {
             const [tu0, tu1] = this.def.tunnelT;
             const tun0 = tu0 * this.length, tun1 = tu1 * this.length;
@@ -1016,9 +1244,33 @@ export class KartTrack {
                 b.addBox(this.def.tunnelRock, new Vec3(pos.x, pos.y + 7.1, pos.z), yaw, hw * 2 + 1.6, 0.8, 0.8);
                 b.addBox(this.def.tunnelRock, new Vec3(pos.x, pos.y + 6.6, pos.z), yaw, hw * 2 + 1.6, 0.25, 12.5);
             }
+            for (const ps of [tun0, tun1]) {
+                this.sampleAt(ps, f);
+                const yaw = Math.atan2(f.tangent.x, f.tangent.z);
+                const hw = f.half + 1.2;
+                const portalCol = isCanyon ? shade(this.def.tunnelRock, 1.25) : 0x8a8a92;
+                for (const side of [-1, 1]) {
+                    this.posAt(ps, side * (hw + 0.9), pos);
+                    b.addBox(portalCol, new Vec3(pos.x, pos.y + 4.0, pos.z), yaw, 1.4, 8, 1.4);
+                }
+                this.posAt(ps, 0, pos);
+                const beamW = hw * 2 + 4.4;
+                if (isCanyon) {
+                    b.addBox(portalCol, new Vec3(pos.x, pos.y + 8.2, pos.z), yaw, beamW, 1.6, 1.6);
+                } else {
+                    const segW = beamW / 8;
+                    for (let i = 0; i < 8; i++) {
+                        const lat = -beamW / 2 + segW * (i + 0.5);
+                        this.posAt(ps, lat, pos);
+                        b.addBox(i % 2 === 0 ? 0xf5d020 : 0x222226,
+                            new Vec3(pos.x, pos.y + 8.2, pos.z), yaw, segW, 1.6, 1.6);
+                    }
+                }
+            }
         }
 
-        // bridge parapets (sunset track only)
+        // bridge parapets (sunset track only) + red/white top rail +
+        // suspension pylons with crossbeams and diagonal cables.
         if (this.def.bridgeT) {
             const [br0t, br1t] = this.def.bridgeT;
             const br0 = br0t * this.length, br1 = br1t * this.length;
@@ -1028,19 +1280,50 @@ export class KartTrack {
                 for (const side of [-1, 1]) {
                     this.posAt(s, side * (f.half + 1.7), pos);
                     b.addBox(0xa8a094, new Vec3(pos.x, pos.y + 0.6, pos.z), yaw, 0.6, 1.15, 10.5);
+                    const seg = Math.floor(s / 10) % 2 === 0 ? this.def.curbA : 0xffffff;
+                    b.addBox(seg, new Vec3(pos.x, pos.y + 1.25, pos.z), yaw, 0.65, 0.18, 10.5);
                 }
+            }
+            for (const ft of [1 / 3, 2 / 3]) {
+                const s = br0 + (br1 - br0) * ft;
+                this.sampleAt(s, f);
+                const yaw = Math.atan2(f.tangent.x, f.tangent.z);
+                const deckY = f.pos.y;
+                for (const side of [-1, 1]) {
+                    this.posAt(s, side * (f.half + 4), pos);
+                    const topY = deckY + 12;
+                    b.addBox(0xffffff, new Vec3(pos.x, (0.5 + topY) / 2, pos.z), yaw, 1.2, topY - 0.5, 1.2);
+                    // diagonal cables: pylon top -> deck, fore and aft.
+                    // addPrimitive's rotX tilts the box in its local YZ
+                    // plane (see MeshBuilder); +tilt drops the +Z end.
+                    for (const dir of [-1, 1]) {
+                        const cableLen = Math.hypot(12, 11.5);
+                        const midS = s + dir * 6;
+                        this.sampleAt(midS, f);
+                        const myaw = Math.atan2(f.tangent.x, f.tangent.z);
+                        this.posAt(midS, side * (f.half + 4), pos);
+                        const tilt = Math.atan2(11.5, 12);
+                        b.addPrimitive(0x2b2b30, primitives.box({ width: 0.28, height: 0.28, length: cableLen }),
+                            new Vec3(pos.x, deckY + 6.25, pos.z), myaw, _sv.set(1, 1, 1), dir > 0 ? tilt : -tilt);
+                    }
+                }
+                // crossbeam joining the two pylon tops
+                this.posAt(s, 0, pos);
+                b.addBox(0xffffff, new Vec3(pos.x, deckY + 11.4, pos.z), yaw, f.half * 2 + 10.4, 1.2, 1.2);
             }
         }
 
-        // start gantry at s = 0
+        // start gantry at s = 0 (PBR navy beam + pennant flags)
         this.sampleAt(0, f);
         const gyaw = Math.atan2(f.tangent.x, f.tangent.z);
         for (const side of [-1, 1]) {
             this.posAt(0, side * (f.half + 0.8), pos);
-            b.addBox(0x182650, new Vec3(pos.x, pos.y + 3.25, pos.z), gyaw, 0.5, 6.5, 0.5);
+            sb.addBox(0x182650, new Vec3(pos.x, pos.y + 3.25, pos.z), gyaw, 0.5, 6.5, 0.5, 0.6, 0.35);
+            sb.addBox(side < 0 ? 0xe63946 : 0xf5d020,
+                new Vec3(pos.x, pos.y + 7.0, pos.z), gyaw, 0.12, 1.0, 1.6, 0.1, 0.4);
         }
         this.posAt(0, 0, pos);
-        b.addBox(0x182650, new Vec3(pos.x, pos.y + 6.5, pos.z), gyaw, f.half * 2 + 2.2, 1.4, 0.5);
+        sb.addBox(0x182650, new Vec3(pos.x, pos.y + 6.5, pos.z), gyaw, f.half * 2 + 2.2, 1.4, 0.5, 0.6, 0.35);
         // checkered start strip under the beam (replaces the old yellow bar)
         const stripW = f.half * 2 + 2.2;
         const segW = stripW / 8;
@@ -1050,16 +1333,108 @@ export class KartTrack {
             b.addBox(i % 2 === 0 ? 0x111111 : 0xffffff,
                 new Vec3(pos.x, pos.y + 5.85, pos.z), gyaw, segW, 0.5, 0.6);
         }
+        // checkered finish line ON the road under the gantry: two rows of
+        // squares following the crown (lift falls to 0 at the road edge).
+        for (let row = 0; row < 2; row++) {
+            const rowS = row === 0 ? 1.1 : -1.1;
+            for (let i = 0; i < 8; i++) {
+                const lat = -stripW / 2 + segW * (i + 0.5);
+                this.posAt(rowS, lat, pos);
+                const lift = Math.max(0, 0.09 * (1 - Math.abs(lat) / f.half));
+                b.addBox((i + row) % 2 === 0 ? 0x111111 : 0xffffff,
+                    new Vec3(pos.x, pos.y + lift + 0.05, pos.z), gyaw, segW, 0.06, 1.1);
+            }
+        }
 
-        // boost pads (cyan strips on the road)
+        // boost pads (PBR cyan, emissive, + white chevrons pointing forward)
         for (const pad of this.def.boostPads) {
             const mid = ((pad.t0 + pad.t1) / 2) * this.length;
             const len = (pad.t1 - pad.t0) * this.length;
             this.sampleAt(mid, f);
             const yaw = Math.atan2(f.tangent.x, f.tangent.z);
             this.posAt(mid, pad.lat, pos);
-            b.addBox(0x00d2ff, new Vec3(pos.x, pos.y + 0.05, pos.z), yaw, pad.hw * 2, 0.08, len);
+            sb.addBox(0x00d2ff, new Vec3(pos.x, pos.y + 0.14, pos.z), yaw, pad.hw * 2, 0.06, len, 0, 0.3, 0x00d2ff);
+            for (const cside of [-1, 1]) {
+                b.addBox(0xffffff,
+                    new Vec3(pos.x + f.right.x * cside * 0.9, pos.y + 0.2, pos.z + f.right.z * cside * 0.9),
+                    yaw + cside * 0.6, 0.35, 0.05, 2.2);
+            }
         }
+
+        // sunset: sailboats on the sea beside the low beach stretch
+        // (they sit ON the water plane at y 0.5, below the cliff road).
+        // canyon: an oasis pond + round-top palms beside the village.
+        if (!isCanyon) {
+            for (const bs of [0.63, 0.70]) {
+                const s = bs * this.length;
+                this.sampleAt(s, f);
+                const side = bs === 0.63 ? -1 : 1;
+                this.posAt(s, side * (f.half + 32 + rnd() * 10), pos);
+                const byaw = Math.atan2(f.tangent.x, f.tangent.z) + (rnd() - 0.5) * 0.6;
+                b.addBox(0x8a5a3a, new Vec3(pos.x, 0.9, pos.z), byaw, 1.6, 0.8, 4.2);
+                b.addCylinder(0x6e5234, new Vec3(pos.x, 3.0, pos.z), 0, 0.12, 0.12, 4.0);
+                b.addCone(0xffffff, new Vec3(pos.x, 5.2, pos.z), byaw + Math.PI / 4, 1.8, 4.4, 4);
+            }
+        } else if (this.def.pond) {
+            const ps = 0.72 * this.length;
+            this.sampleAt(ps, f);
+            this.posAt(ps, f.half + 16, pos);
+            sb.addCylinder(this.def.pond, new Vec3(pos.x, pos.y - 0.1, pos.z), 0, 13, 14, 0.5, 0, 0.1);
+            for (let i = 0; i < 5; i++) {
+                const a = (i / 5) * Math.PI * 2 + 0.5;
+                const px = pos.x + Math.cos(a) * 17, pz = pos.z + Math.sin(a) * 17;
+                b.addCylinder(this.def.treeTrunk, new Vec3(px, pos.y + 1.5, pz), 0, 0.28, 0.4, 3.0);
+                b.addSphere(this.def.treeLeaf[1], new Vec3(px, pos.y + 4.6, pz), 0, 2.4, 1.9, 2.4);
+            }
+        }
+    }
+
+    /**
+     * Gradient sky dome (unlit bands, horizon -> zenith) + sun ball.
+     * kart.scene has no skybox and its camera clear colour is a flat
+     * sky blue, so the dome carries the per-track sky: warm sunset bands
+     * on the coast, pale gold on the canyon. Radius 650 < camera far
+     * (1000); the bands face inward (reversed winding, inward normals)
+     * so they are visible from inside the dome. The sun ball sits just
+     * inside the dome with a larger pale halo ball behind it.
+     */
+    private _buildSky(b: MeshBuilder): void {
+        const ctr = this.centroid(new Vec3());
+        const R = 650;
+        const bands = this.def.sky; // horizon -> zenith
+        const edges = [-6, 6, 18, 32, 50, 90]; // degrees; bands.length + 1
+        const LON = 24;
+        const n = Math.min(bands.length, edges.length - 1);
+        for (let bi = 0; bi < n; bi++) {
+            const e0 = edges[bi] * Math.PI / 180, e1 = edges[bi + 1] * Math.PI / 180;
+            const pArr: number[] = [];
+            const nArr: number[] = [];
+            const uArr: number[] = [];
+            const iArr: number[] = [];
+            for (let ring = 0; ring < 2; ring++) {
+                const el = ring === 0 ? e0 : e1;
+                for (let j = 0; j <= LON; j++) {
+                    const az = (j / LON) * Math.PI * 2;
+                    const x = Math.cos(el) * Math.cos(az), y = Math.sin(el), z = Math.cos(el) * Math.sin(az);
+                    pArr.push(ctr.x + x * R, y * R, ctr.z + z * R);
+                    nArr.push(-x, -y, -z);
+                    uArr.push(0, 0);
+                }
+            }
+            for (let j = 0; j < LON; j++) {
+                const a = j, c = j + 1, d = (LON + 1) + j, e = (LON + 1) + j + 1;
+                // (lower, upper+1, upper) + (lower, lower+1, upper+1): inward
+                iArr.push(a, e, d, a, c, e);
+            }
+            b.addGeometry(bands[bi], pArr, nArr, uArr, iArr);
+        }
+        // sun ball + halo ball just behind it along the same ray
+        const az = this.def.sunAzimDeg * Math.PI / 180;
+        const el = this.def.sunElevDeg * Math.PI / 180;
+        const dx = Math.cos(az) * Math.cos(el), dz = Math.sin(az) * Math.cos(el);
+        const sx = ctr.x + dx * 600, sy = 600 * Math.sin(el), sz = ctr.z + dz * 600;
+        b.addSphere(this.def.sunHalo, new Vec3(sx + dx * 45, sy, sz + dz * 45), 0, 52, 52, 52);
+        b.addSphere(this.def.sunDisc, new Vec3(sx, sy, sz), 0, 32, 32, 32);
     }
 }
 
@@ -1199,6 +1574,151 @@ export class MeshBuilder {
             const renderer = node.addComponent(ModelComponent);
             renderer.mesh = mesh;
             renderer.setMaterial(mat, 0);
+        }
+        return root;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StdBuilder — PBR twin of MeshBuilder (builtin-standard materials).
+// MeshBuilder above is NOT to be touched (KartModel depends on it); the
+// track's hero surfaces (road, curbs, shoulder, sea/sand, boost pads,
+// gantry, oasis pond) get glossy PBR here instead, with the same
+// merge-per-bucket draw-call discipline: one node per (colour, metallic,
+// roughness, emissive) bucket. The rest of the track stays unlit flat
+// colour (same pattern as the karts: PBR bodies + unlit driver/shadow),
+// which keeps every vertical face readable with no ambient-light risk.
+// ---------------------------------------------------------------------------
+
+/** Multiply a hex colour's channels by f (clamped) — darker / lighter variants. */
+function shade(hex: number, f: number): number {
+    const r = Math.min(255, Math.max(0, Math.round(((hex >> 16) & 0xff) * f)));
+    const g = Math.min(255, Math.max(0, Math.round(((hex >> 8) & 0xff) * f)));
+    const b = Math.min(255, Math.max(0, Math.round((hex & 0xff) * f)));
+    return (r << 16) | (g << 8) | b;
+}
+
+const _stdMats = new Map<string, Material>();
+
+function stdMaterial(hex: number, metallic: number, roughness: number, emissiveHex: number): Material {
+    const key = hex.toString(16) + '_' + metallic + '_' + roughness + '_' + emissiveHex.toString(16);
+    let mat = _stdMats.get(key);
+    if (!mat) {
+        mat = new Material();
+        mat.initialize({ effectName: 'builtin-standard' });
+        mat.setProperty('mainColor', new Color((hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff, 255));
+        mat.setProperty('metallic', metallic);
+        mat.setProperty('roughness', roughness);
+        if (emissiveHex !== 0) {
+            mat.setProperty('emissive', new Color((emissiveHex >> 16) & 0xff, (emissiveHex >> 8) & 0xff, emissiveHex & 0xff, 255));
+        }
+        _stdMats.set(key, mat);
+    }
+    return mat;
+}
+
+interface StdBucket {
+    positions: number[];
+    normals: number[];
+    uvs: number[];
+    indices: number[];
+    hex: number;
+    metallic: number;
+    roughness: number;
+    emissive: number;
+}
+
+export class StdBuilder {
+    private _buckets = new Map<string, StdBucket>();
+
+    private _bucket(hex: number, metallic: number, roughness: number, emissive: number): StdBucket {
+        const key = hex.toString(16) + '_' + metallic + '_' + roughness + '_' + emissive.toString(16);
+        let bk = this._buckets.get(key);
+        if (!bk) {
+            bk = { positions: [], normals: [], uvs: [], indices: [], hex, metallic, roughness, emissive };
+            this._buckets.set(key, bk);
+        }
+        return bk;
+    }
+
+    /** Raw geometry straight into a PBR bucket (positions already world). */
+    public addGeometry(hex: number, positions: number[], normals: number[], uvs: number[], indices: number[],
+        metallic: number = 0, roughness: number = 0.9, emissive: number = 0): void {
+        const bk = this._bucket(hex, metallic, roughness, emissive);
+        const base = bk.positions.length / 3;
+        for (let i = 0; i < positions.length; i++) { bk.positions.push(positions[i]); }
+        for (let i = 0; i < normals.length; i++) { bk.normals.push(normals[i]); }
+        for (let i = 0; i < uvs.length; i++) { bk.uvs.push(uvs[i]); }
+        for (let i = 0; i < indices.length; i++) { bk.indices.push(indices[i] + base); }
+    }
+
+    /** Transform a primitive into a PBR bucket (same TRS as MeshBuilder). */
+    public addPrimitive(hex: number, prim: any, pos: Vec3, rotY: number, scale: Vec3, rotX: number = 0,
+        metallic: number = 0, roughness: number = 0.9, emissive: number = 0): void {
+        Quat.fromEuler(_q, rotX * 180 / Math.PI, rotY * 180 / Math.PI, 0);
+        const bk = this._bucket(hex, metallic, roughness, emissive);
+        const base = bk.positions.length / 3;
+        const p = prim.positions as number[];
+        const n = prim.normals as number[];
+        const uv = prim.uvs as number[];
+        const idx = prim.indices as number[];
+        for (let i = 0; i < p.length; i += 3) {
+            _pv.set(p[i] * scale.x, p[i + 1] * scale.y, p[i + 2] * scale.z);
+            Vec3.transformQuat(_pv, _pv, _q);
+            bk.positions.push(_pv.x + pos.x, _pv.y + pos.y, _pv.z + pos.z);
+        }
+        for (let i = 0; i < n.length; i += 3) {
+            _nv.set(n[i], n[i + 1], n[i + 2]);
+            Vec3.transformQuat(_nv, _nv, _q);
+            bk.normals.push(_nv.x, _nv.y, _nv.z);
+        }
+        for (let i = 0; i < uv.length; i++) { bk.uvs.push(uv[i]); }
+        for (let i = 0; i < idx.length; i++) { bk.indices.push(idx[i] + base); }
+    }
+
+    /** Axis-aligned box centred at pos, rotated rotY radians about Y. */
+    public addBox(hex: number, pos: Vec3, rotY: number, w: number, h: number, d: number,
+        metallic: number = 0, roughness: number = 0.9, emissive: number = 0): void {
+        this.addPrimitive(hex, primitives.box({ width: w, height: h, length: d }), pos, rotY, _sv.set(1, 1, 1), 0, metallic, roughness, emissive);
+    }
+
+    /** Y-axis cylinder (radiusTop 0 = cone tip) centred at pos. */
+    public addCylinder(hex: number, pos: Vec3, rotY: number, rTop: number, rBottom: number, h: number,
+        metallic: number = 0, roughness: number = 0.9, emissive: number = 0): void {
+        this.addPrimitive(hex, primitives.cylinder(rTop, rBottom, h, { radialSegments: 12 }), pos, rotY, _sv.set(1, 1, 1), 0, metallic, roughness, emissive);
+    }
+
+    /** Emit one Node per PBR bucket under parent. Returns the root node. */
+    public build(parent: Node): Node {
+        const root = new Node('stdRoot');
+        root.layer = Layers.Enum.DEFAULT;
+        root.setParent(parent);
+        for (const [, bk] of this._buckets) {
+            if (bk.positions.length === 0 || bk.indices.length === 0) { continue; }
+            const minPos = new Vec3(1e9, 1e9, 1e9);
+            const maxPos = new Vec3(-1e9, -1e9, -1e9);
+            for (let i = 0; i < bk.positions.length; i += 3) {
+                const x = bk.positions[i], y = bk.positions[i + 1], z = bk.positions[i + 2];
+                if (x < minPos.x) { minPos.x = x; }
+                if (y < minPos.y) { minPos.y = y; }
+                if (z < minPos.z) { minPos.z = z; }
+                if (x > maxPos.x) { maxPos.x = x; }
+                if (y > maxPos.y) { maxPos.y = y; }
+                if (z > maxPos.z) { maxPos.z = z; }
+            }
+            const mesh = utils.MeshUtils.createMesh({
+                positions: bk.positions,
+                normals: bk.normals,
+                uvs: bk.uvs,
+                indices: bk.indices,
+                minPos, maxPos,
+            });
+            const node = new Node('std_' + bk.hex.toString(16) + '_' + bk.metallic + '_' + bk.roughness);
+            node.layer = Layers.Enum.DEFAULT;
+            node.setParent(root);
+            const renderer = node.addComponent(ModelComponent);
+            renderer.mesh = mesh;
+            renderer.setMaterial(stdMaterial(bk.hex, bk.metallic, bk.roughness, bk.emissive), 0);
         }
         return root;
     }
