@@ -10,14 +10,18 @@
  *   body   1.7 x 0.5 x 2.1 @ y 0.50   sloped nose (tipped box) @ y 0.45, z +0.90
  *   front wing 1.9 x 0.08 x 0.5 @ y 0.28, z +1.15   side pods @ (±0.85, 0.45, -0.10)
  *   seat   0.8 x 0.5 x 0.7 @ y 0.85, z -0.20
- *   driver torso (driver colour) @ y 0.98 + helmet SPHERE r 0.32 @ y 1.42 (driver colour) + dark visor
- *   rear wing 1.9 x 0.08 x 0.5 @ y 1.12, z -1.00 + 2 struts + 2 exhaust pipes
+ *   driver torso (body colour) @ y 0.98 + helmet SPHERE r 0.32 @ y 1.42 (accent colour) + dark visor
+ *   rear wing (width/height per spoiler style) @ z -1.00 + 2 struts + 2 accent end plates + 2 exhaust pipes
  *   wheels r 0.34, w 0.28 @ (±0.85, 0.34, ±0.75) + light hubcaps; fronts steer, all spin
  *   shadow disc r 1.25 @ y 0.05 (opaque dark disc, no transparency needed)
+ *
+ * Phase 2 step 2: the shape varies per roster entry (spoiler style,
+ * nose shape, side-pod size, accent stripe + helmet) — see DriverStats.
  */
 
 import { Layers, Material, ModelComponent, Node, Vec3, primitives, utils } from 'cc';
 import { MeshBuilder } from './KartTrack';
+import { DriverStats } from './KartConstants';
 
 export interface KartModel {
     root: Node;
@@ -123,8 +127,13 @@ function addMeshNode(parent: Node, name: string, mesh: any, mat: Material): Node
     return node;
 }
 
-/** Build one kart. colour = body colour (0xRRGGBB), dark = nose/spoiler shade. */
-export function buildKartModel(colour: number, dark: number): KartModel {
+/** Build one kart from its roster entry. The shape varies per driver
+ * (spoiler style, nose shape, side-pod size, accent stripe + helmet)
+ * so the 8 karts read as distinct characters, not recolours. */
+export function buildKartModel(stats: DriverStats): KartModel {
+    const colour = stats.color;
+    const dark = stats.dark;
+    const accent = stats.accent;
     const root = new Node('kart');
     root.layer = Layers.Enum.DEFAULT;
 
@@ -132,20 +141,43 @@ export function buildKartModel(colour: number, dark: number): KartModel {
     body.layer = Layers.Enum.DEFAULT;
     body.setParent(root);
 
+    // spoiler dimensions per style
+    let wingY = 1.12, wingW = 1.9, strutH = 0.35, strutY = 0.95;
+    if (stats.spoiler === 'tall') { wingY = 1.32; wingW = 2.0; strutH = 0.55; strutY = 1.05; }
+    else if (stats.spoiler === 'wide') { wingY = 1.05; wingW = 2.3; strutH = 0.35; strutY = 0.88; }
+    else if (stats.spoiler === 'fin') { wingY = 1.18; wingW = 1.6; strutH = 0.40; strutY = 1.00; }
+    const podW = 0.35 * stats.pod;
+
     // body shell: one merged mesh per colour
     const b = new MeshBuilder();
     b.addBox(colour, new Vec3(0, 0.50, 0), 0, 1.7, 0.5, 2.1); // main tub
     b.addBox(colour, new Vec3(0, 0.78, -0.55), 0, 1.1, 0.28, 0.9); // rear deck
-    b.addBox(0xf2f2f2, new Vec3(0, 0.93, -0.55), 0, 0.4, 0.02, 0.9); // deck stripe
-    // sloped nose: a box tipped about X so the front dips (rotX via addPrimitive)
-    b.addPrimitive(dark, primitives.box({ width: 1.2, height: 0.3, length: 0.9 }),
-        new Vec3(0, 0.45, 0.90), 0, new Vec3(1, 1, 1), -0.28);
+    b.addBox(accent, new Vec3(0, 0.93, -0.55), 0, 0.4, 0.02, 0.9); // deck stripe (accent)
+    // nose shape per driver: point = sloped wedge, flat = blunt slab,
+    // round = short wedge + a rounded tip sphere
+    if (stats.nose === 'flat') {
+        b.addPrimitive(dark, primitives.box({ width: 1.4, height: 0.34, length: 0.9 }),
+            new Vec3(0, 0.48, 0.90), 0, new Vec3(1, 1, 1), -0.10);
+    } else if (stats.nose === 'round') {
+        b.addPrimitive(dark, primitives.box({ width: 1.1, height: 0.3, length: 0.8 }),
+            new Vec3(0, 0.45, 0.85), 0, new Vec3(1, 1, 1), -0.20);
+        b.addSphere(dark, new Vec3(0, 0.42, 1.28), 0, 0.30, 0.26, 0.26); // rounded tip
+    } else { // 'point'
+        b.addPrimitive(dark, primitives.box({ width: 1.2, height: 0.3, length: 0.9 }),
+            new Vec3(0, 0.45, 0.90), 0, new Vec3(1, 1, 1), -0.28);
+    }
     b.addBox(dark, new Vec3(0, 0.28, 1.15), 0, 1.9, 0.08, 0.5); // front wing
-    b.addBox(colour, new Vec3(-0.85, 0.45, -0.10), 0, 0.35, 0.3, 1.2); // side pod L
-    b.addBox(colour, new Vec3(0.85, 0.45, -0.10), 0, 0.35, 0.3, 1.2); // side pod R
-    b.addBox(dark, new Vec3(0, 1.12, -1.00), 0, 1.9, 0.08, 0.5); // rear wing
-    b.addBox(dark, new Vec3(-0.6, 0.95, -1.00), 0, 0.08, 0.35, 0.08); // strut L
-    b.addBox(dark, new Vec3(0.6, 0.95, -1.00), 0, 0.08, 0.35, 0.08); // strut R
+    b.addBox(colour, new Vec3(-0.85, 0.45, -0.10), 0, podW, 0.3, 1.2); // side pod L
+    b.addBox(colour, new Vec3(0.85, 0.45, -0.10), 0, podW, 0.3, 1.2); // side pod R
+    b.addBox(dark, new Vec3(0, wingY, -1.00), 0, wingW, 0.08, 0.5); // rear wing
+    b.addBox(dark, new Vec3(-0.6, strutY, -1.00), 0, 0.08, strutH, 0.08); // strut L
+    b.addBox(dark, new Vec3(0.6, strutY, -1.00), 0, 0.08, strutH, 0.08); // strut R
+    // accent end plates on the rear wing
+    b.addBox(accent, new Vec3(-wingW / 2, wingY, -1.00), 0, 0.06, 0.2, 0.5);
+    b.addBox(accent, new Vec3(wingW / 2, wingY, -1.00), 0, 0.06, 0.2, 0.5);
+    if (stats.spoiler === 'fin') {
+        b.addBox(dark, new Vec3(0, 1.38, -1.00), 0, 0.08, 0.45, 0.6); // central fin
+    }
     // exhausts: cylinders tipped onto their side (axis Y -> Z)
     b.addPrimitive(0x555560, primitives.cylinder(0.09, 0.09, 0.3, { radialSegments: 8 }),
         new Vec3(-0.3, 0.55, -1.12), 0, new Vec3(1, 1, 1), Math.PI / 2);
@@ -153,7 +185,7 @@ export function buildKartModel(colour: number, dark: number): KartModel {
         new Vec3(0.3, 0.55, -1.12), 0, new Vec3(1, 1, 1), Math.PI / 2);
     b.addBox(0x222226, new Vec3(0, 0.85, -0.20), 0, 0.8, 0.5, 0.7); // seat
     b.addBox(colour, new Vec3(0, 0.98, -0.20), 0, 0.7, 0.45, 0.5); // driver torso
-    b.addSphere(colour, new Vec3(0, 1.42, -0.20), 0, 0.32, 0.32, 0.32); // helmet (driver colour)
+    b.addSphere(accent, new Vec3(0, 1.42, -0.20), 0, 0.32, 0.32, 0.32); // helmet (accent colour)
     b.addBox(0x1a1a20, new Vec3(0, 1.42, 0.10), 0, 0.5, 0.18, 0.1); // visor
     b.build(body);
 
