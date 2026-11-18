@@ -1,5 +1,5 @@
 /**
- * Kart race manager for the Star Fighter hall kart game （飞车狂飙 v1.0.10).
+ * Kart race manager for the Star Fighter hall kart game （飞车狂飙 v1.0.11).
  *
  * Arcade spline model: each kart is (sTotal = unwrapped metres along the
  * centreline, d = lateral offset, heading = yaw vs the tangent, speed).
@@ -35,7 +35,7 @@ const RACES_KEY = 'kart_races'; // total races finished
 const WINS_KEY = 'kart_wins'; // total P1 finishes
 const PAINTS_KEY = 'kart_paints'; // JSON: 8 rows of [bool x3] owned paints
 const SELECTED_PAINTS_KEY = 'kart_paint_selected'; // JSON: 8 ints 0..2
-const KART_VERSION = 'v1.0.10';
+const KART_VERSION = 'v1.0.11';
 const RAD2DEG = 180 / Math.PI;
 
 // Pass A (production feel): the old chase cam sat 11 m back / 4.2 m up, so
