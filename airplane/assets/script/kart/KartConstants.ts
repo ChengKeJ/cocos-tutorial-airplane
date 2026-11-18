@@ -182,6 +182,124 @@ for (const d of ROSTER) {
     d.driftMul = 0.90 + (d.drift - 1) * 0.05;
 }
 
+// ---- Phase 2 step 3: progression (coins + unlockable paints) ----
+// All local: coins are earned by finishing races, paints are cosmetic
+// colour swaps only. Karts and tracks are never gated — progression
+// only adds looks, never locks existing content.
+
+/** Coins for finishing P1..P8 (index = position - 1). */
+export const REWARD_BY_POSITION = [100, 80, 65, 50, 40, 30, 20, 10];
+/** Bonus coins for a new personal best on that track + mode. */
+export const REWARD_NEW_BEST = 50;
+
+/** One paint scheme: a procedural colour swap of body / dark / accent.
+ * Index 0 of each kart's list is the default ("经典", free, always owned). */
+export interface PaintScheme {
+    name: string;
+    color: number;
+    dark: number;
+    accent: number;
+    /** Coins to unlock (0 = free / always owned). */
+    price: number;
+}
+
+/** 3 paints per kart: default + 2 unlockables (150 / 300 coins).
+ * All original colour swaps — no copied designs. */
+export const PAINTS: PaintScheme[][] = [
+    [ // 凌风 (base red)
+        { name: '经典', color: 0xff3b5c, dark: 0xc22540, accent: 0xffffff, price: 0 },
+        { name: '晨曦金', color: 0xffb020, dark: 0xc07f00, accent: 0x1a1a20, price: 150 },
+        { name: '午夜黑', color: 0x2b2b33, dark: 0x14141a, accent: 0xff3b5c, price: 300 },
+    ],
+    [ // 海蓝 (base blue)
+        { name: '经典', color: 0x2ea8ff, dark: 0x1d7cc9, accent: 0x7ee8fa, price: 0 },
+        { name: '珊瑚橙', color: 0xff7a5c, dark: 0xd94f2e, accent: 0xffffff, price: 150 },
+        { name: '极光绿', color: 0x2ee6a8, dark: 0x1aa87e, accent: 0x1a1a20, price: 300 },
+    ],
+    [ // 闪电 (base yellow)
+        { name: '经典', color: 0xffd23f, dark: 0xd9a91e, accent: 0x1a1a20, price: 0 },
+        { name: '烈焰红', color: 0xff4a3d, dark: 0xc22e22, accent: 0xffd23f, price: 150 },
+        { name: '幻影紫', color: 0x9b5cf6, dark: 0x6a3fd1, accent: 0xffffff, price: 300 },
+    ],
+    [ // 青竹 (base green)
+        { name: '经典', color: 0x4ade5a, dark: 0x2fae3e, accent: 0x1a1a20, price: 0 },
+        { name: '翠玉青', color: 0x2ee6c8, dark: 0x1aa88f, accent: 0xffffff, price: 150 },
+        { name: '落樱粉', color: 0xff9ec7, dark: 0xd96a9e, accent: 0x1a1a20, price: 300 },
+    ],
+    [ // 紫曜 (base purple)
+        { name: '经典', color: 0x8b5cf6, dark: 0x6a3fd1, accent: 0xffd23f, price: 0 },
+        { name: '星云蓝', color: 0x3d7bff, dark: 0x2a56c2, accent: 0x7ee8fa, price: 150 },
+        { name: '熔岩红', color: 0xff5a3d, dark: 0xc23a22, accent: 0xffd23f, price: 300 },
+    ],
+    [ // 橙光 (base orange)
+        { name: '经典', color: 0xff8a3d, dark: 0xd9661a, accent: 0x2ea8ff, price: 0 },
+        { name: '薄荷绿', color: 0x4ade9e, dark: 0x2fae6e, accent: 0x1a1a20, price: 150 },
+        { name: '曜石灰', color: 0x8a94a6, dark: 0x5f6878, accent: 0xff8a3d, price: 300 },
+    ],
+    [ // 雪驰 (base light blue)
+        { name: '经典', color: 0x7ee8fa, dark: 0x4cb8cc, accent: 0xff3b5c, price: 0 },
+        { name: '樱花粉', color: 0xffb3d9, dark: 0xd986b3, accent: 0xff3b5c, price: 150 },
+        { name: '深海蓝', color: 0x1d5fd6, dark: 0x144aab, accent: 0x7ee8fa, price: 300 },
+    ],
+    [ // 绯焰 (base rose)
+        { name: '经典', color: 0xe8456b, dark: 0xb92a4e, accent: 0xffd23f, price: 0 },
+        { name: '电光蓝', color: 0x3dc8ff, dark: 0x1e96cc, accent: 0x1a1a20, price: 150 },
+        { name: '柠檬黄', color: 0xf2e93d, dark: 0xc2b81e, accent: 0xe8456b, price: 300 },
+    ],
+];
+
+/** Coins earned for finishing `pos` (1..8), plus the new-best bonus
+ * when `isNewBest`. Pure function (node-testable). */
+export function rewardForFinish(pos: number, isNewBest: boolean): number {
+    const p = Math.max(1, Math.min(8, Math.floor(pos) || 8));
+    return REWARD_BY_POSITION[p - 1] + (isNewBest ? REWARD_NEW_BEST : 0);
+}
+
+/** Result of tapping a paint in the select screen. Pure decision:
+ * owned -> just select it; affordable -> buy + select; else too poor. */
+export function paintTapResult(coins: number, price: number, owned: boolean): 'selected' | 'bought' | 'poor' {
+    if (owned) { return 'selected'; }
+    return coins >= price ? 'bought' : 'poor';
+}
+
+/** Parse the owned-paints store (JSON array of 8 rows of [bool x3]).
+ * Garbage / missing entries fall back to [true, false, false]; index 0
+ * (default paint) is always owned. Pure function (node-testable). */
+export function parseOwnedPaints(raw: string | null): boolean[][] {
+    const out: boolean[][] = [];
+    for (let i = 0; i < ROSTER.length; i++) { out.push([true, false, false]); }
+    if (!raw) { return out; }
+    try {
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) { return out; }
+        for (let i = 0; i < ROSTER.length && i < arr.length; i++) {
+            const row = arr[i];
+            if (Array.isArray(row)) {
+                out[i][1] = row[1] === true;
+                out[i][2] = row[2] === true;
+            }
+        }
+    } catch (e) { /* fall back to defaults */ }
+    return out;
+}
+
+/** Parse the selected-paint store (JSON array of 8 ints 0..2).
+ * Garbage / missing entries fall back to 0 (default paint). */
+export function parseSelectedPaints(raw: string | null): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < ROSTER.length; i++) { out.push(0); }
+    if (!raw) { return out; }
+    try {
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) { return out; }
+        for (let i = 0; i < ROSTER.length && i < arr.length; i++) {
+            const v = arr[i];
+            out[i] = (typeof v === 'number' && v >= 0 && v < 3) ? Math.floor(v) : 0;
+        }
+    } catch (e) { /* fall back to defaults */ }
+    return out;
+}
+
 /**
  * Grid order for a race: the player's pick first, then the rest in
  * roster order. So karts[0] is always the player and no AI duplicates
