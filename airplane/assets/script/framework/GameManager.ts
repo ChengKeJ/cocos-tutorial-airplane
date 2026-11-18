@@ -49,8 +49,11 @@ interface WaveDef {
     types: number[];    // enemy types allowed this wave (weighted by repetition)
 }
 
-const WAVES: WaveDef[] = [
-    { quota: 12, interval: 1.0, speedMul: 1.00, types: [1, 1, 2] },
+export const WAVES: WaveDef[] = [
+    // v1.0.8 fix B: wave 1 opens at 0.6s between spawns (was 1.0s) —
+    // the first ~15s used to be idle; the opening formation below
+    // fills the screen from the first second.
+    { quota: 12, interval: 0.6, speedMul: 1.00, types: [1, 1, 2] },
     { quota: 16, interval: 0.9, speedMul: 1.15, types: [1, 2, 2, 3] },
     { quota: 20, interval: 0.8, speedMul: 1.30, types: [1, 2, 3, 3, 4] },
     { quota: 24, interval: 0.7, speedMul: 1.45, types: [1, 2, 3, 4, 4] },
@@ -64,6 +67,21 @@ const COMBO_KILLS_PER_STEP = 4; // every 4 kills without a hit: +1 multiplier st
 const COMBO_MAX_MULT = 8;
 const ELITE_CHANCE = 0.12; // waves 2+: share of spawns rolled as an elite variant
 const ELITE_TYPE_OFFSET = 10; // elite of base type N reports as type N+10
+
+// v1.0.8 fix B: the wave-1 opening formation — [enemy type, x, z],
+// a shallow V on screen from the first second. Exported so node tests
+// can pin the shape (5 enemies, types 1/2 only, inside the playfield).
+export const OPENING_FORMATION: Array<[number, number, number]> = [
+    [Constant.EnemyType.TYPE1, 0, -45],
+    [Constant.EnemyType.TYPE2, -10, -50],
+    [Constant.EnemyType.TYPE2, 10, -50],
+    [Constant.EnemyType.TYPE1, -18, -55],
+    [Constant.EnemyType.TYPE1, 18, -55],
+];
+
+// v1.0.8 fix B: the player opens with Lv.2 firepower (twin parallel
+// shots) instead of Lv.1. gameStart() sets _weaponLevel to this.
+export const OPENING_WEAPON_LEVEL = 2;
 
 // Build version, stamped to the console at startup (nothing on screen)
 // so a playtest report can be tied to a build at a glance. Bump on
@@ -270,6 +288,12 @@ export class GameManager extends Component {
                     this._waveState = 'boss';
                 } else {
                     this._waveState = 'fighting';
+                    // v1.0.8 fix B: wave 1 opens with a formation on
+                    // screen immediately — no more empty first seconds.
+                    if (this._wave === 1) {
+                        this._spawnOpeningFormation();
+                        this._spawnTimer = 0;
+                    }
                 }
             }
         } else if (this._waveState === 'choice') {
@@ -383,6 +407,11 @@ export class GameManager extends Component {
         this._score = 0;
         this.gameScore.string = this._score.toString();
         this._resetWeapon();
+        // v1.0.8 fix B: open with Lv.2 firepower (twin parallel shots)
+        // instead of Lv.1 — the first seconds should feel strong, not
+        // like a pea-shooter. Life-lost / new-run resets still go to Lv.1
+        // via _resetWeapon() elsewhere; this line only sets the opener.
+        this._weaponLevel = OPENING_WEAPON_LEVEL;
         this._currShootTime = this._effectiveShootTime();
         this._resetCombo();
         this._fireRateLevel = 0;
@@ -778,9 +807,15 @@ export class GameManager extends Component {
     }
 
     private _spawnEnemyByType(type: number){
+        const randomPos = math.randomRangeInt(-22, 23);
+        this._spawnEnemyAt(type, randomPos, -50);
+    }
+
+    /** Spawn one enemy of a type at an explicit position (used by the
+     * opening formation; the timed spawner above uses a random x). */
+    private _spawnEnemyAt(type: number, x: number, z: number){
         const waveDef = WAVES[this._wave - 1];
         const speedMul = waveDef ? waveDef.speedMul : 1;
-        const randomPos = math.randomRangeInt(-22, 23);
         let prefab: Prefab = null;
         let speed = 0;
         let hp = 1;
@@ -837,11 +872,21 @@ export class GameManager extends Component {
         }
 
         const enemy = PoolManager.instance().getNode(prefab, this.node);
-        enemy.setPosition(randomPos, 0, -50);
+        enemy.setPosition(x, 0, z);
         const enemyComp = enemy.getComponent(EnemyPlane);
         enemyComp.show(this, speed, needBullet, {
             hp: hp, moveMode: moveMode, scale: scale, score: score, type: type,
         });
+    }
+
+    /** v1.0.8 fix B: wave 1 opening formation — 5 enemies in a shallow
+     * V on screen from the first second (centre diver up front, sine
+     * weavers on the flanks, divers on the wings). Small enough that it
+     * does not flood the wave-1 quota (12 kills). */
+    private _spawnOpeningFormation(){
+        for (const [type, x, z] of OPENING_FORMATION) {
+            this._spawnEnemyAt(type, x, z);
+        }
     }
 
     private _spawnBoss(){
