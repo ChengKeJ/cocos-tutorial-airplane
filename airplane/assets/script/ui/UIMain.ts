@@ -318,7 +318,20 @@ export class UIMain extends Component {
      * plane never snaps to the finger position.
      * Both touch channels deliver the same TOUCH_START; the second one
      * is ignored while a drag is already in progress (otherwise the
-     * anchor would re-lift and the offset would double). */
+     * anchor would re-lift and the offset would double).
+     *
+     * RATCHET FIX (2026-11-18, drive129): the lift used to be computed
+     * from the plane's CURRENT position (anchorPlane.z - DRAG_OFFSET_Z),
+     * so every touch-down lifted the plane another 5 units — 15 -> 10 ->
+     * 5 -> ... — however far the finger was, until the plane pinned at
+     * the top of the screen. The lift is now anchored to the FINGER's
+     * ground point: the plane lifts at most DRAG_OFFSET_Z, and never
+     * past finger-ground-minus-DRAG_OFFSET_Z. If the plane is already
+     * at or above that target it does not move at all, so touching down
+     * again at the same spot is a no-op — the gap can no longer
+     * accumulate. (When the camera mapping is unavailable there is no
+     * finger ground point, so the old flat 5-unit lift applies and the
+     * delta-drag fallback takes over from there, as before.) */
     private _beginDrag(touch: Touch) {
         if (!this.playerPlane || this._dragging) {
             return;
@@ -327,10 +340,17 @@ export class UIMain extends Component {
         this._dragAnchorLoc = { x: loc.x, y: loc.y };
         this._dragAnchorGround = this._groundFromTouch(touch);
         this._dragAnchorPlane.set(this.playerPlane.position);
+        // Finger-anchored lift (see header): at most DRAG_OFFSET_Z, and
+        // never past the finger's ground point minus DRAG_OFFSET_Z.
+        let lift = DRAG_OFFSET_Z;
+        if (this._dragAnchorGround) {
+            const targetZ = this._dragAnchorGround.z - DRAG_OFFSET_Z;
+            lift = Math.min(DRAG_OFFSET_Z, Math.max(0, this._dragAnchorPlane.z - targetZ));
+        }
         this._dragLifted.set(
             this._dragAnchorPlane.x,
             this._dragAnchorPlane.y,
-            this._dragAnchorPlane.z - DRAG_OFFSET_Z,
+            this._dragAnchorPlane.z - lift,
         );
         this._dragging = true;
         this._setPlanePos(this._dragLifted.x, this._dragLifted.z);
