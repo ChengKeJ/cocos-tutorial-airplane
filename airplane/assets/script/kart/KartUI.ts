@@ -11,6 +11,12 @@
  * minimap is a Graphics polyline of the centreline + 8 kart dots.
  * Input listeners are registered in onEnable and removed in onDisable
  * (the scene is unloaded when returning to the hall — never leak them).
+ *
+ * AAA visual pass: one art direction with the PBR karts — chunky
+ * rounded "sticker" panels (deep navy, thick white/gold outlines,
+ * gloss strip on every button), gold hero accent, drop-shadowed
+ * display type, selected states as gold rings. Labels, buttons and
+ * flows are unchanged; only the look moved.
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find, view } from 'cc';
@@ -24,6 +30,19 @@ const WHITE = new Color(255, 255, 255, 255);
 const GREY = new Color(170, 170, 170, 255);
 const RED = new Color(255, 90, 90, 255);
 const STICK_RADIUS = 60;
+// AAA art direction (matches the glossy PBR karts): cute chunky low-poly
+// "sticker" UI — deep-navy panels, thick white/gold outlines, a gloss
+// highlight strip on every button, gold as the hero accent.
+const NAVY = new Color(16, 24, 42, 255);
+const SKY = new Color(30, 120, 220, 255);
+const ORANGE = new Color(255, 122, 26, 255);
+const MINT = new Color(60, 220, 130, 255);
+const PINK = new Color(235, 80, 180, 255);
+const SHADOW = new Color(0, 0, 0, 170);
+const DIM_BG = new Color(52, 58, 72, 255);
+
+/** Restyleable button face (size + base colour), for selected states. */
+interface BtnStyle { node: Node; w: number; h: number; bg: Color; }
 
 // Decorative emoji per track, in TRACK_DEFS order (🌊 sunset, 🌵 canyon).
 // Module-level so _buildPanels and _refreshTrackUI use the same icons.
@@ -69,8 +88,12 @@ export class KartUI extends Component {
     private _countLights: Label[] = [];
     private _bannerLabel: Label = null;
     private _bannerTime = 0;
+    private _bannerPill: Node = null;
+    private _countPopT = 0; // countdown numeral pop (scale 1.3 -> 1)
+    private _toastPill: Node = null;
+    private _driftRing: Node = null; // gold ring around DRIFT while held
     private _confetti: Graphics = null;
-    private _confettiParts: Array<{ x: number; y: number; vx: number; vy: number; c: Color; s: number }> = [];
+    private _confettiParts: Array<{ x: number; y: number; vx: number; vy: number; c: Color; s: number; ph: number; round: boolean }> = [];
     private _confettiT = 0;
     private _resultsPopT = 0;
     private _minimap: Graphics = null;
@@ -87,16 +110,19 @@ export class KartUI extends Component {
     private _menuScrimNode: Node = null;
     private _menuBestLabel: Label = null;
     private _trackBtnLabels: Label[] = [];
+    private _trackBtnStyles: BtnStyle[] = [];
     private _trackDescLabel: Label = null;
     // kart select (Phase 2 step 2): one chip per roster kart + the
     // selected kart's name/tagline and 1..5 stat dots.
     private _kartBtnLabels: Label[] = [];
+    private _kartBtnStyles: BtnStyle[] = [];
     private _kartNameLabel: Label = null;
     private _kartStatsLabel: Label = null;
     // progression (Phase 2 step 3): coins + races/wins line, and the
     // selected kart's 3 paint buttons (default + 2 unlockables).
     private _coinsLabel: Label = null;
     private _paintBtnLabels: Label[] = [];
+    private _paintBtnStyles: BtnStyle[] = [];
     private _resultsPanel: Node = null;
     private _resultsLabel: Label = null;
     private _resultsTitle: Label = null;
@@ -156,13 +182,28 @@ export class KartUI extends Component {
         // toast auto-hide
         if (this._toastTime > 0) {
             this._toastTime -= dt;
-            if (this._toastTime <= 0 && this._toastLabel) { this._toastLabel.node.active = false; }
+            if (this._toastTime <= 0) {
+                if (this._toastLabel) { this._toastLabel.node.active = false; }
+                if (this._toastPill) { this._toastPill.active = false; }
+            }
         }
         // banner auto-hide
         if (this._bannerTime > 0) {
             this._bannerTime -= dt;
-            if (this._bannerTime <= 0 && this._bannerLabel) { this._bannerLabel.node.active = false; }
+            if (this._bannerTime <= 0) {
+                if (this._bannerLabel) { this._setDisplayActive(this._bannerLabel, false); }
+                if (this._bannerPill) { this._bannerPill.active = false; }
+            }
         }
+        // countdown numeral pop-in (scale 1.3 -> 1 over 0.18 s)
+        if (this._countPopT > 0 && this._countdownLabel) {
+            this._countPopT -= dt;
+            const t = Math.max(0, this._countPopT / 0.18);
+            const s = 1 + 0.3 * t;
+            this._countdownLabel.node.setScale(s, s, 1);
+        }
+        // drift button ring: gold halo while the drift touch is held
+        if (this._driftRing) { this._driftRing.active = this._driftId >= 0; }
         // results pop-in (scale 0.85 -> 1 over 0.25 s)
         if (this._resultsPopT > 0) {
             this._resultsPopT -= dt;
@@ -286,6 +327,9 @@ export class KartUI extends Component {
             const d = TRACK_DEFS[i];
             const icon = i < TRACK_ICONS.length ? TRACK_ICONS[i] : '';
             this._trackBtnLabels[i].string = (d.id === sel ? '✓ ' : '') + (icon ? icon + ' ' : '') + d.name;
+            if (i < this._trackBtnStyles.length) {
+                this._drawButtonFace(this._trackBtnStyles[i], d.id === sel);
+            }
         }
         if (this._trackDescLabel) {
             let def = TRACK_DEFS[0];
@@ -319,6 +363,9 @@ export class KartUI extends Component {
         const sel = this._game.selectedKart;
         for (let i = 0; i < ROSTER.length && i < this._kartBtnLabels.length; i++) {
             this._kartBtnLabels[i].string = (i === sel ? '✓ ' : '') + ROSTER[i].name;
+            if (i < this._kartBtnStyles.length) {
+                this._drawButtonFace(this._kartBtnStyles[i], i === sel);
+            }
         }
         const d = ROSTER[sel];
         if (!d) { return; }
@@ -352,6 +399,14 @@ export class KartUI extends Component {
             let s = (p === cur ? '✓ ' : '') + paint.name;
             if (!owned[p]) { s += ' 🔒' + paint.price; }
             this._paintBtnLabels[p].string = s;
+            // equipped = gold ring + gold text; locked = dim face + grey
+            // text; owned but not equipped = plain white text.
+            this._paintBtnLabels[p].color = p === cur ? GOLD : (!owned[p] ? GREY : WHITE);
+            if (p < this._paintBtnStyles.length) {
+                const st = this._paintBtnStyles[p];
+                st.bg = !owned[p] ? DIM_BG : NAVY;
+                this._drawButtonFace(st, p === cur);
+            }
         }
     }
 
@@ -389,11 +444,18 @@ export class KartUI extends Component {
 
     public showCountdown(text: string) {
         if (!this._countdownLabel) { return; }
-        this._countdownLabel.string = text;
-        this._countdownLabel.node.active = text.length > 0;
+        this._setDisplayText(this._countdownLabel, text);
+        this._setDisplayActive(this._countdownLabel, text.length > 0);
+        // numeral pop: big beat numbers punch in at 1.3x and settle
+        if (text.length > 0) {
+            this._countPopT = 0.18;
+            this._countdownLabel.node.setScale(1.3, 1.3, 1);
+        } else {
+            this._countdownLabel.node.setScale(1, 1, 1);
+        }
         // lights: 3/2/1 fill red one by one, GO turns all green, '' hides
         const lit = text === '3' ? 1 : text === '2' ? 2 : text === '1' ? 3 : text === 'GO!' ? 3 : 0;
-        const col = text === 'GO!' ? new Color(60, 220, 90, 255) : new Color(230, 50, 50, 255);
+        const col = text === 'GO!' ? MINT : new Color(230, 50, 50, 255);
         for (let i = 0; i < this._countLights.length; i++) {
             const dot = this._countLights[i];
             dot.node.active = text.length > 0;
@@ -404,8 +466,9 @@ export class KartUI extends Component {
     /** Big centre banner (final lap) — auto-hides after `seconds`. */
     public showBanner(text: string, seconds: number = 2) {
         if (!this._bannerLabel) { return; }
-        this._bannerLabel.string = text;
-        this._bannerLabel.node.active = true;
+        this._setDisplayText(this._bannerLabel, text);
+        this._setDisplayActive(this._bannerLabel, true);
+        if (this._bannerPill) { this._bannerPill.active = true; }
         this._bannerTime = seconds;
     }
 
@@ -413,6 +476,7 @@ export class KartUI extends Component {
         if (!this._toastLabel) { return; }
         this._toastLabel.string = text;
         this._toastLabel.node.active = true;
+        if (this._toastPill) { this._toastPill.active = true; }
         this._toastTime = seconds;
         // Render above everything (menu scrim, results, pause panels):
         // re-assert last-sibling order on every show. A start()-time
@@ -421,6 +485,11 @@ export class KartUI extends Component {
         // (drive125) — only setSiblingIndex() actually reorders it.
         if (this._canvas) {
             this._toastLabel.node.setSiblingIndex(this._canvas.children.length - 1);
+            // the pill was built before the menu/results panels, so it
+            // would sit under their scrims — keep it just under the text
+            if (this._toastPill) {
+                this._toastPill.setSiblingIndex(this._canvas.children.length - 2);
+            }
         }
     }
 
@@ -444,7 +513,7 @@ export class KartUI extends Component {
         this._startConfetti();
         if (this._resultsTitle) {
             const mine = rows.findIndex((r) => r.isPlayer);
-            this._resultsTitle.string = mine === 0 ? '🏆 冠军！' : '完赛！第 ' + (mine + 1) + ' 名';
+            this._setDisplayText(this._resultsTitle, mine === 0 ? '🏆 冠军！' : '完赛！第 ' + (mine + 1) + ' 名');
         }
         if (this._resultsLabel) {
             const lines: string[] = [];
@@ -571,6 +640,88 @@ export class KartUI extends Component {
 
     // ---- builders ----
 
+    /** Display text with a chunky drop shadow: the shadow is a dark copy
+     * offset (-4,-5) created first (renders behind), named <name>_sh.
+     * _setDisplayText keeps the shadow's string in sync. */
+    private _makeDisplayLabel(parent: Node, name: string, x: number, y: number, fontSize: number, color: Color, text: string): Label {
+        this._makeLabel(parent, name + '_sh', x - 4, y - 5, fontSize, SHADOW, text);
+        const main = this._makeLabel(parent, name, x, y, fontSize, color, text);
+        (main as any).isBold = true;
+        return main;
+    }
+
+    /** Set a display label's string and its shadow twin's. */
+    private _setDisplayText(label: Label, text: string): void {
+        label.string = text;
+        const p = label.node.parent;
+        const sh = p ? p.getChildByName(label.node.name + '_sh') : null;
+        if (sh) {
+            const l = sh.getComponent(Label);
+            if (l) { l.string = text; }
+        }
+    }
+
+    /** Toggle a display label and its shadow twin together. */
+    private _setDisplayActive(label: Label, active: boolean): void {
+        label.node.active = active;
+        const p = label.node.parent;
+        const sh = p ? p.getChildByName(label.node.name + '_sh') : null;
+        if (sh) { sh.active = active; }
+    }
+
+    /** Solid rounded bar (title underlines, accent strips). */
+    private _makeBar(parent: Node, name: string, x: number, y: number, w: number, h: number, color: Color): Node {
+        const node = new Node(name);
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        node.setPosition(x, y, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(w, h);
+        const g = node.addComponent(Graphics);
+        g.fillColor = color;
+        g.roundRect(-w / 2, -h / 2, w, h, h / 2);
+        g.fill();
+        return node;
+    }
+
+    /** (Re)draw a rectangular button face: rounded body, gloss strip
+     * near the top edge, thick outline — white normally, gold + wider
+     * when selected. */
+    private _drawButtonFace(st: BtnStyle, selected: boolean): void {
+        const g = st.node.getComponent(Graphics);
+        if (!g) { return; }
+        const w = st.w, h = st.h;
+        const r = Math.min(18, h * 0.3);
+        g.clear();
+        g.fillColor = st.bg;
+        g.roundRect(-w / 2, -h / 2, w, h, r);
+        g.fill();
+        g.fillColor = new Color(255, 255, 255, selected ? 90 : 55);
+        g.roundRect(-w / 2 + 10, h / 2 - 16, w - 20, 9, 4);
+        g.fill();
+        g.strokeColor = selected ? GOLD : new Color(255, 255, 255, 255);
+        g.lineWidth = selected ? 5 : 3;
+        g.roundRect(-w / 2, -h / 2, w, h, r);
+        g.stroke();
+    }
+
+    /** (Re)draw a round button face: filled disc, gloss blob, white ring. */
+    private _drawRoundFace(node: Node, r: number, bg: Color): void {
+        const g = node.getComponent(Graphics);
+        if (!g) { return; }
+        g.clear();
+        g.fillColor = bg;
+        g.circle(0, 0, r);
+        g.fill();
+        g.fillColor = new Color(255, 255, 255, 70);
+        g.circle(-r * 0.3, r * 0.35, r * 0.32);
+        g.fill();
+        g.strokeColor = new Color(255, 255, 255, 255);
+        g.lineWidth = 3;
+        g.circle(0, 0, r);
+        g.stroke();
+    }
+
     private _makeLabel(parent: Node, name: string, x: number, y: number, fontSize: number, color: Color, text: string): Label {
         const node = new Node(name);
         node.layer = Layers.Enum.UI_2D;
@@ -590,7 +741,7 @@ export class KartUI extends Component {
      * Created right after the scrim, so it renders below every label
      * and button; buttons are solid anyway. */
     private _makeBackingPanel(parent: Node, name: string, x: number, y: number,
-        w: number, h: number, r: number): Node {
+        w: number, h: number, r: number, accent: boolean = false, alpha: number = 235): Node {
         const node = new Node(name);
         node.layer = Layers.Enum.UI_2D;
         node.setParent(parent);
@@ -598,13 +749,19 @@ export class KartUI extends Component {
         const t = node.addComponent(UITransform);
         t.setContentSize(w, h);
         const g = node.addComponent(Graphics);
-        g.fillColor = new Color(10, 15, 25, 235);
+        g.fillColor = new Color(10, 15, 25, alpha);
         g.roundRect(-w / 2, -h / 2, w, h, r);
         g.fill();
         g.strokeColor = new Color(255, 255, 255, 80);
         g.lineWidth = 2;
         g.roundRect(-w / 2, -h / 2, w, h, r);
         g.stroke();
+        if (accent) {
+            // gold hero strip along the top edge
+            g.fillColor = GOLD;
+            g.roundRect(-w / 2 + 16, h / 2 - 12, w - 32, 6, 3);
+            g.fill();
+        }
         return node;
     }
 
@@ -616,14 +773,8 @@ export class KartUI extends Component {
         node.setPosition(x, y, 0);
         const t = node.addComponent(UITransform);
         t.setContentSize(w, h);
-        const g = node.addComponent(Graphics);
-        g.fillColor = bg;
-        g.rect(-w / 2, -h / 2, w, h);
-        g.fill();
-        g.strokeColor = new Color(255, 255, 255, 255);
-        g.lineWidth = 2;
-        g.rect(-w / 2, -h / 2, w, h);
-        g.stroke();
+        node.addComponent(Graphics);
+        this._drawButtonFace({ node, w, h, bg }, false);
         const labelNode = new Node('label');
         labelNode.layer = Layers.Enum.UI_2D;
         labelNode.setParent(node);
@@ -644,14 +795,8 @@ export class KartUI extends Component {
         node.setPosition(x, y, 0);
         const t = node.addComponent(UITransform);
         t.setContentSize(r * 2, r * 2);
-        const g = node.addComponent(Graphics);
-        g.fillColor = bg;
-        g.circle(0, 0, r);
-        g.fill();
-        g.strokeColor = new Color(255, 255, 255, 255);
-        g.lineWidth = 2;
-        g.circle(0, 0, r);
-        g.stroke();
+        node.addComponent(Graphics);
+        this._drawRoundFace(node, r, bg);
         const labelNode = new Node('label');
         labelNode.layer = Layers.Enum.UI_2D;
         labelNode.setParent(node);
@@ -676,24 +821,38 @@ export class KartUI extends Component {
         this._hudRoot = hud;
         hud.active = false;
 
+        // pill backings behind the HUD clusters (created before the
+        // labels so they render underneath): top-left position/lap,
+        // top-centre time/zone, bottom speed + item slot.
+        this._makeBackingPanel(hud, 'hudPosPill', -230, 565, 270, 120, 20, false, 200);
+        this._makeBackingPanel(hud, 'hudTimePill', 0, 565, 280, 120, 20, false, 200);
+        this._makeBackingPanel(hud, 'hudSpeedPill', 280, -520, 190, 76, 20, false, 200);
+        this._makeBackingPanel(hud, 'hudItemPill', 0, -520, 220, 76, 20, false, 200);
+
         this._posLabel = this._makeLabel(hud, 'posLabel', -230, 590, 44, GOLD, '第 1/8 名');
         this._lapLabel = this._makeLabel(hud, 'lapLabel', -230, 540, 28, WHITE, '第 1/3 圈');
         this._timeLabel = this._makeLabel(hud, 'timeLabel', 0, 590, 30, WHITE, '0:00.0');
         this._zoneLabel = this._makeLabel(hud, 'zoneLabel', 0, 540, 24, GREY, '');
         this._speedLabel = this._makeLabel(hud, 'speedLabel', 280, -520, 36, WHITE, '0 km/h');
         this._itemLabel = this._makeLabel(hud, 'itemLabel', 0, -520, 32, WHITE, '—');
-        this._countdownLabel = this._makeLabel(this._canvas, 'countdownLabel', 0, 150, 56, GOLD, '');
-        (this._countdownLabel as any).isBold = true;
-        this._countdownLabel.node.active = false;
+        // countdown: huge display numeral with a drop shadow (pops in at
+        // 1.3x — see showCountdown / update)
+        this._countdownLabel = this._makeDisplayLabel(this._canvas, 'countdownLabel', 0, 150, 110, GOLD, '');
+        this._setDisplayActive(this._countdownLabel, false);
         // countdown lights: 3 dots above the numeral, fill red per beat, green on GO
         for (let i = 0; i < 3; i++) {
-            const dot = this._makeLabel(this._canvas, 'countLight' + i, (i - 1) * 105, 300, 80, GREY, '●');
+            const dot = this._makeLabel(this._canvas, 'countLight' + i, (i - 1) * 130, 330, 96, GREY, '●');
             dot.node.active = false;
             this._countLights.push(dot);
         }
-        // final-lap / big banner (centre, above the countdown spot)
-        this._bannerLabel = this._makeLabel(this._canvas, 'bannerLabel', 0, 250, 48, GOLD, '');
-        this._bannerLabel.node.active = false;
+        // final-lap / big banner: gold pill behind a shadowed display label
+        this._bannerPill = this._makeBackingPanel(this._canvas, 'bannerPill', 0, 250, 560, 92, 24, true, 215);
+        this._bannerPill.active = false;
+        this._bannerLabel = this._makeDisplayLabel(this._canvas, 'bannerLabel', 0, 250, 54, GOLD, '');
+        this._setDisplayActive(this._bannerLabel, false);
+        // toast pill: dark gold-rimmed pill behind the toast text
+        this._toastPill = this._makeBackingPanel(this._canvas, 'toastPill', 0, 460, 620, 56, 28, false, 215);
+        this._toastPill.active = false;
         // toast: built on the Canvas (not the HUD) so menu feedback —
         // e.g. "金币不够" when tapping a locked paint — is visible too.
         // It auto-hides after 1.6 s in update(), in any state. Position
@@ -709,15 +868,30 @@ export class KartUI extends Component {
             new Color(40, 50, 70, 255), () => { if (this._game) { this._game.togglePause(); } });
 
         // drift + item buttons (right side, hold / tap)
-        this._makeRoundButton(hud, 'driftBtn', 250, -400, 62, '漂移', 34,
-            new Color(30, 120, 220, 255),
+        const driftBtn = this._makeRoundButton(hud, 'driftBtn', 250, -400, 62, '漂移', 34,
+            SKY,
             (e: EventTouch) => { this._driftId = e.touch ? e.touch.getID() : 0; },
             () => { this._driftId = -1; });
+        // gold halo ring around DRIFT while held (toggled in update)
+        const ring = new Node('driftRing');
+        ring.layer = Layers.Enum.UI_2D;
+        ring.setParent(driftBtn);
+        ring.setPosition(0, 0, 0);
+        const rt = ring.addComponent(UITransform);
+        rt.setContentSize(150, 150);
+        const rg = ring.addComponent(Graphics);
+        rg.strokeColor = GOLD;
+        rg.lineWidth = 5;
+        rg.circle(0, 0, 72);
+        rg.stroke();
+        ring.active = false;
+        this._driftRing = ring;
         this._makeRoundButton(hud, 'itemBtn', 250, -260, 52, '道具', 30,
-            new Color(220, 140, 30, 255),
+            ORANGE,
             () => { if (this._game) { this._game.useItem(); } });
 
-        // minimap (top-right, under the pause button)
+        // minimap (top-right, under the pause button) + its pill backing
+        this._makeBackingPanel(hud, 'minimapPanel', 255, 425, 214, 214, 24, false, 200);
         const mm = new Node('minimap');
         mm.layer = Layers.Enum.UI_2D;
         mm.setParent(hud);
@@ -770,9 +944,12 @@ export class KartUI extends Component {
         // (y 96). Buttons are solid already, so they need no panel.
         this._makeBackingPanel(menu, 'descBestPanel', 0, -175, 680, 110, 18);
         this._makeBackingPanel(menu, 'hintPanel', 0, -585, 680, 52, 14);
-        this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
+        this._makeDisplayLabel(menu, 'title', 0, 320, 64, GOLD, '飞车狂飙');
+        this._makeBar(menu, 'titleBar', 0, 282, 220, 8, GOLD);
+        this._makeBackingPanel(menu, 'subtitlePill', 0, 250, 430, 46, 23);
         this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
         // progression (Phase 2 step 3): coins + races/wins, top of the menu.
+        this._makeBackingPanel(menu, 'coinsPill', 0, 420, 640, 48, 24);
         this._coinsLabel = this._makeLabel(menu, 'coins', 0, 420, 26, GOLD, '');
         // kart select: 8 chips in one row (body colour, dark text on
         // light colours), ✓ on the player's pick; the selected kart's
@@ -785,10 +962,14 @@ export class KartUI extends Component {
                 new Color((d.color >> 16) & 0xff, (d.color >> 8) & 0xff, d.color & 0xff, 255),
                 () => { this._selectKart(i); },
                 lightColour(d.color) ? new Color(26, 26, 32, 255) : WHITE);
+            this._kartBtnStyles.push({
+                node: btn, w: 78, h: 64,
+                bg: new Color((d.color >> 16) & 0xff, (d.color >> 8) & 0xff, d.color & 0xff, 255),
+            });
             const lab = btn.getChildByName('label');
             if (lab) { this._kartBtnLabels.push(lab.getComponent(Label)); }
         }
-        this._makeBackingPanel(menu, 'kartDetailPanel', 0, 112, 680, 96, 16);
+        this._makeBackingPanel(menu, 'kartDetailPanel', 0, 112, 680, 96, 16, true);
         this._kartNameLabel = this._makeLabel(menu, 'kartName', 0, 130, 28, WHITE, '');
         this._kartStatsLabel = this._makeLabel(menu, 'kartStats', 0, 96, 24, GOLD, '');
         // paints (Phase 2 step 3): 3 schemes for the selected kart —
@@ -800,6 +981,7 @@ export class KartUI extends Component {
             const btn = this._makeButton(menu, 'paintBtn' + p, x, 30, 210, 54,
                 '', 22, new Color(40, 50, 70, 255),
                 () => { this._onPaintTap(p); });
+            this._paintBtnStyles.push({ node: btn, w: 210, h: 54, bg: new Color(40, 50, 70, 255) });
             const lab = btn.getChildByName('label');
             if (lab) { this._paintBtnLabels.push(lab.getComponent(Label)); }
         }
@@ -814,6 +996,7 @@ export class KartUI extends Component {
             const btn = this._makeButton(menu, 'trackBtn' + d.id, x, -80, 230, 90,
                 icon + ' ' + d.name, 30, new Color(40, 90, 60, 255),
                 () => { this._selectTrack(d.id); });
+            this._trackBtnStyles.push({ node: btn, w: 230, h: 90, bg: new Color(40, 90, 60, 255) });
             const lab = btn.getChildByName('label');
             if (lab) { this._trackBtnLabels.push(lab.getComponent(Label)); }
         }
@@ -863,8 +1046,8 @@ export class KartUI extends Component {
         // ~40 px pitch (measured off the drive127 results screenshot),
         // so the block is ~400 px tall centred on y 60; the panel gives
         // ~25 px of slack top and bottom.
-        this._makeBackingPanel(res, 'rowsPanel', 0, 60, 680, 450, 18);
-        this._resultsTitle = this._makeLabel(res, 'title', 0, 330, 56, GOLD, '完赛！');
+        this._makeBackingPanel(res, 'rowsPanel', 0, 60, 680, 450, 18, true);
+        this._resultsTitle = this._makeDisplayLabel(res, 'title', 0, 330, 64, GOLD, '完赛！');
         this._resultsLabel = this._makeLabel(res, 'rows', 0, 60, 26, WHITE, '');
         this._makeButton(res, 'againBtn', 0, -260, 480, 110, '再来一局', 44,
             new Color(30, 120, 220, 255), () => { if (this._game) { this._game.startRace(); } });
@@ -878,7 +1061,7 @@ export class KartUI extends Component {
         pau.setPosition(0, 0, 0);
         this._pausePanel = pau;
         pau.active = false;
-        this._makeLabel(pau, 'title', 0, 200, 56, GOLD, '暂停');
+        this._makeDisplayLabel(pau, 'title', 0, 200, 64, GOLD, '暂停');
         this._makeButton(pau, 'resumeBtn', 0, 40, 480, 110, '继续', 44,
             new Color(30, 120, 220, 255), () => { if (this._game) { this._game.togglePause(); } });
         this._makeButton(pau, 'restartBtn', 0, -80, 480, 110, '重开', 40,
@@ -898,6 +1081,10 @@ export class KartUI extends Component {
         bg.fillColor = new Color(255, 255, 255, 60);
         bg.circle(0, 0, STICK_RADIUS + 10);
         bg.fill();
+        bg.strokeColor = new Color(255, 255, 255, 140);
+        bg.lineWidth = 3;
+        bg.circle(0, 0, STICK_RADIUS + 10);
+        bg.stroke();
         const knob = new Node('stickKnob');
         knob.layer = Layers.Enum.UI_2D;
         knob.setParent(base);
@@ -908,6 +1095,13 @@ export class KartUI extends Component {
         kg.fillColor = GOLD;
         kg.circle(0, 0, 32);
         kg.fill();
+        kg.fillColor = new Color(255, 255, 255, 110);
+        kg.circle(-9, 10, 9);
+        kg.fill();
+        kg.strokeColor = new Color(255, 255, 255, 255);
+        kg.lineWidth = 3;
+        kg.circle(0, 0, 32);
+        kg.stroke();
         base.active = false;
         this._stickBase = base;
         this._stickKnob = knob;
@@ -929,22 +1123,26 @@ export class KartUI extends Component {
     private _startConfetti(): void {
         if (!this._confetti) { return; }
         this._confettiParts = [];
+        // palette-matched to the UI art direction: red/teal/amber/blue/
+        // gold + the mint and pink accents
         const cols = [
             new Color(230, 57, 70, 255), new Color(42, 157, 143, 255),
             new Color(244, 162, 97, 255), new Color(67, 97, 238, 255),
-            new Color(255, 210, 63, 255),
+            new Color(255, 210, 63, 255), MINT, PINK,
         ];
-        for (let i = 0; i < 70; i++) {
+        for (let i = 0; i < 120; i++) {
             this._confettiParts.push({
                 x: (Math.random() - 0.5) * 700,
                 y: 300 + Math.random() * 340,
                 vx: (Math.random() - 0.5) * 60,
                 vy: -(120 + Math.random() * 180),
                 c: cols[i % cols.length],
-                s: 8 + Math.random() * 8,
+                s: 8 + Math.random() * 10,
+                ph: Math.random() * Math.PI * 2,
+                round: i % 3 === 0,
             });
         }
-        this._confettiT = 2.5;
+        this._confettiT = 3.5;
     }
 
     private _updateConfetti(dt: number): void {
@@ -957,29 +1155,46 @@ export class KartUI extends Component {
         const g = this._confetti;
         g.clear();
         for (const p of this._confettiParts) {
-            p.x += p.vx * dt;
+            // sideways sway as they fall, so the rain feels alive
+            p.x += (p.vx + Math.sin(this._confettiT * 3 + p.ph) * 25) * dt;
             p.y += p.vy * dt;
             p.vy -= 60 * dt; // gravity: falls faster over time
             g.fillColor = p.c;
-            g.rect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s * 0.6);
+            if (p.round) {
+                g.circle(p.x, p.y, p.s / 2);
+            } else {
+                g.rect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s * 0.6);
+            }
             g.fill();
         }
     }
 
     // ---- speed lines ----
 
-    /** Radial streaks from the centre outward; alpha grows with speed. */
+    /** Radial streaks from the centre outward; alpha grows with speed.
+     * Every 4th streak is gold and thicker, for a speed-boost feel. */
     private _drawSpeedLines(ratio: number): void {
         if (!this._speedLines) { return; }
         const g = this._speedLines;
         g.clear();
-        const a = Math.round(40 + Math.min(1, ratio) * 110);
+        const a = Math.round(50 + Math.min(1, ratio) * 140);
         g.strokeColor = new Color(255, 255, 255, a);
         g.lineWidth = 3;
         for (let i = 0; i < 12; i++) {
             const ang = Math.random() * Math.PI * 2;
             const r1 = 130 + Math.random() * 90;
-            const r2 = r1 + 60 + Math.random() * 130;
+            const r2 = r1 + 80 + Math.random() * 170;
+            const c = Math.cos(ang), s = Math.sin(ang);
+            g.moveTo(c * r1, s * r1);
+            g.lineTo(c * r2, s * r2);
+        }
+        g.stroke();
+        g.strokeColor = new Color(255, 196, 0, a);
+        g.lineWidth = 5;
+        for (let i = 0; i < 6; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const r1 = 150 + Math.random() * 80;
+            const r2 = r1 + 100 + Math.random() * 180;
             const c = Math.cos(ang), s = Math.sin(ang);
             g.moveTo(c * r1, s * r1);
             g.lineTo(c * r2, s * r2);
