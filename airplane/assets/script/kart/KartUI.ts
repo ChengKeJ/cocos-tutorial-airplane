@@ -16,7 +16,7 @@
 import { _decorator, Color, Component, EventTouch, Graphics, Input, input, KeyCode, Label, Layers, Node, UITransform, Vec3, find, view } from 'cc';
 import { KartGame } from './KartGame';
 import { TRACK_DEFS } from './KartTrack';
-import { ITEM_NAMES, KartConstants } from './KartConstants';
+import { ITEM_NAMES, KartConstants, ROSTER } from './KartConstants';
 const { ccclass, property } = _decorator;
 
 const GOLD = new Color(255, 196, 0, 255);
@@ -36,6 +36,18 @@ function fmtTime(t: number): string {
     const si = Math.floor(s);
     const d = Math.floor((s - si) * 10);
     return m + ':' + (si < 10 ? '0' : '') + si + '.' + d;
+}
+
+/** 1..5 stat as filled/empty dots, e.g. ●●●○○. */
+function statDots(n: number): string {
+    const f = Math.max(0, Math.min(5, n));
+    return '●'.repeat(f) + '○'.repeat(5 - f);
+}
+
+/** True when a 0xRRGGBB colour is light enough to need dark label text. */
+function lightColour(hex: number): boolean {
+    const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff;
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150;
 }
 
 @ccclass('KartUI')
@@ -76,6 +88,11 @@ export class KartUI extends Component {
     private _menuBestLabel: Label = null;
     private _trackBtnLabels: Label[] = [];
     private _trackDescLabel: Label = null;
+    // kart select (Phase 2 step 2): one chip per roster kart + the
+    // selected kart's name/tagline and 1..5 stat dots.
+    private _kartBtnLabels: Label[] = [];
+    private _kartNameLabel: Label = null;
+    private _kartStatsLabel: Label = null;
     private _resultsPanel: Node = null;
     private _resultsLabel: Label = null;
     private _resultsTitle: Label = null;
@@ -191,6 +208,7 @@ export class KartUI extends Component {
         if (show) {
             this.showHud(false);
             this._refreshTrackUI();
+            this._refreshKartUI();
             this._redrawScrim();
             this._setPlayerKartVisible(false);
         } else {
@@ -258,6 +276,33 @@ export class KartUI extends Component {
         if (!this._game) { return; }
         this._game.selectTrack(id);
         this._refreshTrackUI();
+        // the rebuild recreates the kart nodes (active again) — re-hide
+        // the player kart while the menu is still up.
+        this._setPlayerKartVisible(false);
+    }
+
+    /** Kart select chips (✓ on the player's pick) + the selected kart's
+     * name/tagline + 1..5 stat dots. */
+    private _refreshKartUI(): void {
+        if (!this._game) { return; }
+        const sel = this._game.selectedKart;
+        for (let i = 0; i < ROSTER.length && i < this._kartBtnLabels.length; i++) {
+            this._kartBtnLabels[i].string = (i === sel ? '✓ ' : '') + ROSTER[i].name;
+        }
+        const d = ROSTER[sel];
+        if (!d) { return; }
+        if (this._kartNameLabel) { this._kartNameLabel.string = d.name + ' · ' + d.tagline; }
+        if (this._kartStatsLabel) {
+            this._kartStatsLabel.string = '速度 ' + statDots(d.speed)
+                + '  加速 ' + statDots(d.accel)
+                + '  漂移 ' + statDots(d.drift);
+        }
+    }
+
+    private _selectKart(i: number): void {
+        if (!this._game) { return; }
+        this._game.selectKart(i);
+        this._refreshKartUI();
         // the rebuild recreates the kart nodes (active again) — re-hide
         // the player kart while the menu is still up.
         this._setPlayerKartVisible(false);
@@ -472,7 +517,7 @@ export class KartUI extends Component {
     }
 
     private _makeButton(parent: Node, name: string, x: number, y: number, w: number, h: number,
-        text: string, fontSize: number, bg: Color, onTap: () => void): Node {
+        text: string, fontSize: number, bg: Color, onTap: () => void, labelColor: Color = WHITE): Node {
         const node = new Node(name);
         node.layer = Layers.Enum.UI_2D;
         node.setParent(parent);
@@ -493,7 +538,7 @@ export class KartUI extends Component {
         labelNode.setPosition(0, 0, 0);
         const label = labelNode.addComponent(Label);
         label.fontSize = fontSize;
-        label.color = WHITE;
+        label.color = labelColor;
         label.string = text;
         node.on(Node.EventType.TOUCH_START, onTap, this);
         return node;
@@ -619,14 +664,32 @@ export class KartUI extends Component {
         this._redrawScrim();
         // solid backing panels behind the bare text labels (desc + best,
         // and the hint line at the bottom): the full-screen scrim alone
-        // could not hide the yellow centre dashes behind them. Panel
-        // spans y 2..112 around desc (y 85) + best (y 30); hint panel
-        // spans y -396..-344 around the hint (y -370). Buttons are solid
-        // already, so they need no panel.
-        this._makeBackingPanel(menu, 'descBestPanel', 0, 57, 680, 110, 18);
-        this._makeBackingPanel(menu, 'hintPanel', 0, -370, 680, 52, 14);
+        // could not hide the yellow centre dashes behind them. descBest
+        // panel spans y -150..-40 around desc (y -67) + best (y -122);
+        // hint panel spans y -531..-479 around the hint (y -505); the
+        // kart detail panel spans y 64..160 around name (y 130) + stats
+        // (y 96). Buttons are solid already, so they need no panel.
+        this._makeBackingPanel(menu, 'descBestPanel', 0, -95, 680, 110, 18);
+        this._makeBackingPanel(menu, 'hintPanel', 0, -505, 680, 52, 14);
         this._makeLabel(menu, 'title', 0, 320, 56, GOLD, '飞车狂飙');
         this._makeLabel(menu, 'subtitle', 0, 250, 28, WHITE, '3 圈 · 8 辆车 · 漂移加速');
+        // kart select: 8 chips in one row (body colour, dark text on
+        // light colours), ✓ on the player's pick; the selected kart's
+        // name/tagline + 1..5 stat dots sit on the panel below.
+        for (let i = 0; i < ROSTER.length; i++) {
+            const d = ROSTER[i];
+            const x = -287 + i * 82;
+            const btn = this._makeButton(menu, 'kartBtn' + i, x, 200, 78, 64,
+                d.name, 22,
+                new Color((d.color >> 16) & 0xff, (d.color >> 8) & 0xff, d.color & 0xff, 255),
+                () => { this._selectKart(i); },
+                lightColour(d.color) ? new Color(26, 26, 32, 255) : WHITE);
+            const lab = btn.getChildByName('label');
+            if (lab) { this._kartBtnLabels.push(lab.getComponent(Label)); }
+        }
+        this._makeBackingPanel(menu, 'kartDetailPanel', 0, 112, 680, 96, 16);
+        this._kartNameLabel = this._makeLabel(menu, 'kartName', 0, 130, 28, WHITE, '');
+        this._kartStatsLabel = this._makeLabel(menu, 'kartStats', 0, 96, 24, GOLD, '');
         // track select: two circuits, each playable fwd + reverse.
         // Icons are decorative; the ✓ prefix marks the selected one.
         // (TRACK_ICONS is module-level: _refreshTrackUI re-applies the same
@@ -635,23 +698,23 @@ export class KartUI extends Component {
             const d = TRACK_DEFS[i];
             const icon = i < TRACK_ICONS.length ? TRACK_ICONS[i] : '';
             const x = i === 0 ? -125 : 125;
-            const btn = this._makeButton(menu, 'trackBtn' + d.id, x, 150, 230, 90,
+            const btn = this._makeButton(menu, 'trackBtn' + d.id, x, 0, 230, 90,
                 icon + ' ' + d.name, 30, new Color(40, 90, 60, 255),
                 () => { this._selectTrack(d.id); });
             const lab = btn.getChildByName('label');
             if (lab) { this._trackBtnLabels.push(lab.getComponent(Label)); }
         }
-        this._trackDescLabel = this._makeLabel(menu, 'trackDesc', 0, 85, 24, GREY, '');
-        this._menuBestLabel = this._makeLabel(menu, 'best', 0, 30, 28, GOLD, '');
+        this._trackDescLabel = this._makeLabel(menu, 'trackDesc', 0, -67, 24, GREY, '');
+        this._menuBestLabel = this._makeLabel(menu, 'best', 0, -122, 28, GOLD, '');
         // mode select: 正赛 drives the circuit forward, 逆向 drives the
         // same centreline the other way (reversed checkpoints / racing line).
-        this._makeButton(menu, 'startFwdBtn', 0, -60, 480, 100, '🏁 正赛开始', 42,
+        this._makeButton(menu, 'startFwdBtn', 0, -205, 480, 100, '🏁 正赛开始', 42,
             new Color(30, 120, 220, 255), () => { if (this._game) { this._game.startRaceInMode(false); } });
-        this._makeButton(menu, 'startRevBtn', 0, -170, 480, 100, '🔄 逆向开始', 42,
+        this._makeButton(menu, 'startRevBtn', 0, -315, 480, 100, '🔄 逆向开始', 42,
             new Color(150, 80, 200, 255), () => { if (this._game) { this._game.startRaceInMode(true); } });
-        this._makeButton(menu, 'hallBtn', 0, -280, 480, 100, '回大厅', 40,
+        this._makeButton(menu, 'hallBtn', 0, -425, 480, 100, '回大厅', 40,
             new Color(90, 100, 120, 255), () => { if (this._game) { this._game.quitToHall(); } });
-        this._makeLabel(menu, 'hint', 0, -370, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
+        this._makeLabel(menu, 'hint', 0, -505, 24, GREY, '左半屏摇杆转向（下推刹车）· 右侧漂移 / 道具');
 
         // --- results ---
         const res = new Node('kartResults');
