@@ -129,6 +129,7 @@ export class KartGame extends Component {
     private _camInit = false;
     private _countdownT = 0;
     private _countdownShown = '';
+    private _goHoldT = 0; // GO! display hold before racing starts (BUG 2)
     private _raceTime = 0;
     private _resultsShown = false;
     private _resultsT = 0;
@@ -310,9 +311,15 @@ export class KartGame extends Component {
                 if (this.ui) { this.ui.showCountdown(label); }
             }
             if (this._countdownT <= 0) {
-                this.state = 'racing';
-                this._raceTime = 0;
-                if (this.ui) { this.ui.showCountdown(''); this.ui.showHud(true); }
+                // hold GO! + all-green lights so they are actually visible
+                // (was: same frame switched to racing and cleared the label)
+                if (this._goHoldT > 0) {
+                    this._goHoldT -= dt;
+                } else {
+                    this.state = 'racing';
+                    this._raceTime = 0;
+                    if (this.ui) { this.ui.showCountdown(''); this.ui.showHud(true); }
+                }
             }
             this._updateCamera(dt, true);
             return;
@@ -375,6 +382,7 @@ export class KartGame extends Component {
         this._resetGrid();
         this._countdownT = KartConstants.COUNTDOWN_LEAD + 3 * KartConstants.COUNTDOWN_BEAT;
         this._countdownShown = '';
+        this._goHoldT = KartConstants.GO_HOLD;
         this._raceTime = 0;
         this._resultsShown = false;
         this._resultsT = 0;
