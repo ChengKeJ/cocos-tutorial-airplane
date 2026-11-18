@@ -7,11 +7,12 @@
  * +Z locally; KartGame drives position / yaw / bank / pitch.
  *
  * Layout (metres, origin at the road contact point):
- *   body   1.7 x 0.5 x 2.1 @ y 0.50   nose 1.2 x 0.35 x 0.8 @ y 0.42, z +0.90
+ *   body   1.7 x 0.5 x 2.1 @ y 0.50   sloped nose (tipped box) @ y 0.45, z +0.90
+ *   front wing 1.9 x 0.08 x 0.5 @ y 0.28, z +1.15   side pods @ (±0.85, 0.45, -0.10)
  *   seat   0.8 x 0.5 x 0.7 @ y 0.85, z -0.20
- *   driver head r 0.30 @ y 1.35, z -0.20 (white helmet)
- *   spoiler 1.6 x 0.08 x 0.45 @ y 1.05, z -0.95 + 2 struts
- *   wheels r 0.34, w 0.28 @ (±0.85, 0.34, ±0.75); fronts steer, all spin
+ *   driver torso (driver colour) @ y 0.98 + helmet SPHERE r 0.32 @ y 1.42 (driver colour) + dark visor
+ *   rear wing 1.9 x 0.08 x 0.5 @ y 1.12, z -1.00 + 2 struts + 2 exhaust pipes
+ *   wheels r 0.34, w 0.28 @ (±0.85, 0.34, ±0.75) + light hubcaps; fronts steer, all spin
  *   shadow disc r 1.25 @ y 0.05 (opaque dark disc, no transparency needed)
  */
 
@@ -34,6 +35,8 @@ export interface KartModel {
 
 let _wheelMesh: any = null;
 let _wheelMat: Material | null = null;
+let _hubMesh: any = null;
+let _hubMat: Material | null = null;
 let _shadowMesh: any = null;
 let _shadowMat: Material | null = null;
 
@@ -65,6 +68,29 @@ function wheelMesh(): any {
 function wheelMaterial(): Material {
     if (!_wheelMat) { _wheelMat = MeshBuilder.unlitMaterial(0x1e1e22); }
     return _wheelMat;
+}
+
+/** Hubcap: a sphere squashed flat in X (a disc facing out from the wheel). */
+function hubcapMesh(): any {
+    if (!_hubMesh) {
+        const prim = primitives.sphere(1, { segments: 10 });
+        const raw = prim.positions as number[];
+        const pos: number[] = [];
+        for (let i = 0; i < raw.length; i += 3) {
+            pos.push(raw[i] * 0.06, raw[i + 1] * 0.2, raw[i + 2] * 0.2);
+        }
+        const minPos = new Vec3(-0.06, -0.2, -0.2);
+        const maxPos = new Vec3(0.06, 0.2, 0.2);
+        _hubMesh = utils.MeshUtils.createMesh({
+            positions: pos, normals: prim.normals, uvs: prim.uvs, indices: prim.indices, minPos, maxPos,
+        });
+    }
+    return _hubMesh;
+}
+
+function hubcapMaterial(): Material {
+    if (!_hubMat) { _hubMat = MeshBuilder.unlitMaterial(0x9aa0a6); }
+    return _hubMat;
 }
 
 function shadowMesh(): any {
@@ -108,14 +134,27 @@ export function buildKartModel(colour: number, dark: number): KartModel {
 
     // body shell: one merged mesh per colour
     const b = new MeshBuilder();
-    b.addBox(colour, new Vec3(0, 0.50, 0), 0, 1.7, 0.5, 2.1);
+    b.addBox(colour, new Vec3(0, 0.50, 0), 0, 1.7, 0.5, 2.1); // main tub
     b.addBox(colour, new Vec3(0, 0.78, -0.55), 0, 1.1, 0.28, 0.9); // rear deck
-    b.addBox(dark, new Vec3(0, 0.42, 0.90), 0, 1.2, 0.35, 0.8); // nose
-    b.addBox(dark, new Vec3(0, 1.05, -0.95), 0, 1.6, 0.08, 0.45); // spoiler
-    b.addBox(dark, new Vec3(-0.6, 0.88, -0.95), 0, 0.08, 0.3, 0.08); // strut L
-    b.addBox(dark, new Vec3(0.6, 0.88, -0.95), 0, 0.08, 0.3, 0.08); // strut R
+    b.addBox(0xf2f2f2, new Vec3(0, 0.93, -0.55), 0, 0.4, 0.02, 0.9); // deck stripe
+    // sloped nose: a box tipped about X so the front dips (rotX via addPrimitive)
+    b.addPrimitive(dark, primitives.box({ width: 1.2, height: 0.3, length: 0.9 }),
+        new Vec3(0, 0.45, 0.90), 0, new Vec3(1, 1, 1), -0.28);
+    b.addBox(dark, new Vec3(0, 0.28, 1.15), 0, 1.9, 0.08, 0.5); // front wing
+    b.addBox(colour, new Vec3(-0.85, 0.45, -0.10), 0, 0.35, 0.3, 1.2); // side pod L
+    b.addBox(colour, new Vec3(0.85, 0.45, -0.10), 0, 0.35, 0.3, 1.2); // side pod R
+    b.addBox(dark, new Vec3(0, 1.12, -1.00), 0, 1.9, 0.08, 0.5); // rear wing
+    b.addBox(dark, new Vec3(-0.6, 0.95, -1.00), 0, 0.08, 0.35, 0.08); // strut L
+    b.addBox(dark, new Vec3(0.6, 0.95, -1.00), 0, 0.08, 0.35, 0.08); // strut R
+    // exhausts: cylinders tipped onto their side (axis Y -> Z)
+    b.addPrimitive(0x555560, primitives.cylinder(0.09, 0.09, 0.3, { radialSegments: 8 }),
+        new Vec3(-0.3, 0.55, -1.12), 0, new Vec3(1, 1, 1), Math.PI / 2);
+    b.addPrimitive(0x555560, primitives.cylinder(0.09, 0.09, 0.3, { radialSegments: 8 }),
+        new Vec3(0.3, 0.55, -1.12), 0, new Vec3(1, 1, 1), Math.PI / 2);
     b.addBox(0x222226, new Vec3(0, 0.85, -0.20), 0, 0.8, 0.5, 0.7); // seat
-    b.addBox(0xf2f2f2, new Vec3(0, 1.35, -0.20), 0, 0.6, 0.55, 0.6); // helmet (box-ish, stylised)
+    b.addBox(colour, new Vec3(0, 0.98, -0.20), 0, 0.7, 0.45, 0.5); // driver torso
+    b.addSphere(colour, new Vec3(0, 1.42, -0.20), 0, 0.32, 0.32, 0.32); // helmet (driver colour)
+    b.addBox(0x1a1a20, new Vec3(0, 1.42, 0.10), 0, 0.5, 0.18, 0.1); // visor
     b.build(body);
 
     // shadow disc (opaque dark, sits just above the road)
@@ -132,6 +171,9 @@ export function buildKartModel(colour: number, dark: number): KartModel {
         spin.layer = Layers.Enum.DEFAULT;
         spin.setParent(pivot);
         addMeshNode(spin, 'tyre', wheelMesh(), wheelMaterial());
+        // hubcap disc on the outer face (spins with the wheel)
+        const hub = addMeshNode(spin, 'hub', hubcapMesh(), hubcapMaterial());
+        hub.setPosition(x < 0 ? -0.15 : 0.15, 0, 0);
         return pivot;
     };
     const steerFL = mkWheel(root, 'wheelFL', -0.85, 0.75);
