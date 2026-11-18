@@ -801,9 +801,11 @@ export class MeshBuilder {
     /** Transform a primitive into a colour bucket.
      *  Manual TRS (scale -> rotate about Y -> translate): Mat4.fromTRS does
      *  not exist at runtime in Creator 3.8.8, and Vec3.transformMat4 would
-     *  need the matrix — the same result by hand with transformQuat. */
-    public addPrimitive(hex: number, prim: any, pos: Vec3, rotY: number, scale: Vec3): void {
-        Quat.fromEuler(_q, 0, rotY * 180 / Math.PI, 0);
+     *  need the matrix — the same result by hand with transformQuat.
+     *  rotX (radians, optional) tilts the primitive about X first — used
+     *  for the boost-flame cone, which must point backwards (-Z). */
+    public addPrimitive(hex: number, prim: any, pos: Vec3, rotY: number, scale: Vec3, rotX: number = 0): void {
+        Quat.fromEuler(_q, rotX * 180 / Math.PI, rotY * 180 / Math.PI, 0);
         const bk = this._bucket(hex);
         const base = bk.positions.length / 3;
         const p = prim.positions as number[];
@@ -835,8 +837,8 @@ export class MeshBuilder {
     }
 
     /** Cone (radialSegments-sided; 4 = pyramid roof, 10 = tree) centred at pos. */
-    public addCone(hex: number, pos: Vec3, rotY: number, radius: number, h: number, segments: number = 10): void {
-        this.addPrimitive(hex, primitives.cylinder(0, radius, h, { radialSegments: segments }), pos, rotY, _sv.set(1, 1, 1));
+    public addCone(hex: number, pos: Vec3, rotY: number, radius: number, h: number, segments: number = 10, rotX: number = 0): void {
+        this.addPrimitive(hex, primitives.cylinder(0, radius, h, { radialSegments: segments }), pos, rotY, _sv.set(1, 1, 1), rotX);
     }
 
     /** Sphere scaled (rx, ry, rz) centred at pos. */
