@@ -1606,7 +1606,22 @@ function stdMaterial(hex: number, metallic: number, roughness: number, emissiveH
     if (!mat) {
         mat = new Material();
         mat.initialize({ effectName: 'builtin-standard' });
-        mat.setProperty('mainColor', new Color((hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff, 255));
+        // drive130: a builtin effect only ships in the build when a
+        // project asset references it. assets/resources/
+        // kart-std-anchor.mtl references builtin-standard so it is
+        // bundled; but if it still did not resolve (null effect /
+        // zero passes), fall back to builtin-unlit instead of
+        // crashing the whole game at the first setMaterial().
+        const passes = (mat as any).passes as any[];
+        const resolved = (mat as any).effectAsset || (passes && passes.length > 0);
+        const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff;
+        if (!resolved) {
+            mat.initialize({ effectName: 'builtin-unlit' });
+            mat.setProperty('mainColor', new Color(r, g, b, 255));
+            _stdMats.set(key, mat);
+            return mat;
+        }
+        mat.setProperty('mainColor', new Color(r, g, b, 255));
         mat.setProperty('metallic', metallic);
         mat.setProperty('roughness', roughness);
         if (emissiveHex !== 0) {
@@ -1695,30 +1710,39 @@ export class StdBuilder {
         root.setParent(parent);
         for (const [, bk] of this._buckets) {
             if (bk.positions.length === 0 || bk.indices.length === 0) { continue; }
-            const minPos = new Vec3(1e9, 1e9, 1e9);
-            const maxPos = new Vec3(-1e9, -1e9, -1e9);
-            for (let i = 0; i < bk.positions.length; i += 3) {
-                const x = bk.positions[i], y = bk.positions[i + 1], z = bk.positions[i + 2];
-                if (x < minPos.x) { minPos.x = x; }
-                if (y < minPos.y) { minPos.y = y; }
-                if (z < minPos.z) { minPos.z = z; }
-                if (x > maxPos.x) { maxPos.x = x; }
-                if (y > maxPos.y) { maxPos.y = y; }
-                if (z > maxPos.z) { maxPos.z = z; }
+            // drive130: one bad bucket must never take out the whole
+            // track (and the whole game with it) — skip it and keep
+            // building the rest.
+            let node: Node = null;
+            try {
+                const minPos = new Vec3(1e9, 1e9, 1e9);
+                const maxPos = new Vec3(-1e9, -1e9, -1e9);
+                for (let i = 0; i < bk.positions.length; i += 3) {
+                    const x = bk.positions[i], y = bk.positions[i + 1], z = bk.positions[i + 2];
+                    if (x < minPos.x) { minPos.x = x; }
+                    if (y < minPos.y) { minPos.y = y; }
+                    if (z < minPos.z) { minPos.z = z; }
+                    if (x > maxPos.x) { maxPos.x = x; }
+                    if (y > maxPos.y) { maxPos.y = y; }
+                    if (z > maxPos.z) { maxPos.z = z; }
+                }
+                const mesh = utils.MeshUtils.createMesh({
+                    positions: bk.positions,
+                    normals: bk.normals,
+                    uvs: bk.uvs,
+                    indices: bk.indices,
+                    minPos, maxPos,
+                });
+                node = new Node('std_' + bk.hex.toString(16) + '_' + bk.metallic + '_' + bk.roughness);
+                node.layer = Layers.Enum.DEFAULT;
+                node.setParent(root);
+                const renderer = node.addComponent(ModelComponent);
+                renderer.mesh = mesh;
+                renderer.setMaterial(stdMaterial(bk.hex, bk.metallic, bk.roughness, bk.emissive), 0);
+            } catch (e) {
+                console.warn('[StdBuilder] skipped bucket #' + bk.hex.toString(16) + ': ' + e);
+                if (node) { node.destroy(); }
             }
-            const mesh = utils.MeshUtils.createMesh({
-                positions: bk.positions,
-                normals: bk.normals,
-                uvs: bk.uvs,
-                indices: bk.indices,
-                minPos, maxPos,
-            });
-            const node = new Node('std_' + bk.hex.toString(16) + '_' + bk.metallic + '_' + bk.roughness);
-            node.layer = Layers.Enum.DEFAULT;
-            node.setParent(root);
-            const renderer = node.addComponent(ModelComponent);
-            renderer.mesh = mesh;
-            renderer.setMaterial(stdMaterial(bk.hex, bk.metallic, bk.roughness, bk.emissive), 0);
         }
         return root;
     }
