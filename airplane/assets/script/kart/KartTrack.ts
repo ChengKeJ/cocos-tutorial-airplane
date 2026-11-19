@@ -171,9 +171,9 @@ const TRACK_SUNSET: TrackDef = {
         { t0: 0.9575, t1: 0.9740, lat: -3.1, hw: 2.2 },
         { t0: 0.9575, t1: 0.9740, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x666b78,
-    roadAlt: 0x6c717e,
-    shoulder: 0x2e3138,
+    road: 0x7d8290, // round 8: lighter, brighter asphalt (was 0x666b78)
+    roadAlt: 0x838896,
+    shoulder: 0x3a3e48,
     curbA: 0xe63946,
     curbB: 0xf5f0e6,
     water: 0x2f7fc4,
@@ -266,8 +266,8 @@ const TRACK_CANYON: TrackDef = {
         { t0: 0.9050, t1: 0.9220, lat: -3.1, hw: 2.2 },
         { t0: 0.9050, t1: 0.9220, lat: 3.1, hw: 2.2 },
     ],
-    road: 0x6b5646,
-    roadAlt: 0x715c48,
+    road: 0x7d6852, // round 8: lighter desert asphalt (was 0x6b5646)
+    roadAlt: 0x83684f,
     shoulder: 0x3a2d24,
     curbA: 0xd94f30,
     curbB: 0xf5ead6,
@@ -1401,7 +1401,7 @@ export class KartTrack {
             const yaw = Math.atan2(f.tangent.x, f.tangent.z);
             this.posAt(mid, pad.lat, pos);
             const visHw = pad.hw * 0.7; // visual half-width (gameplay hw unchanged)
-            sb.addBox(0x0090b8, new Vec3(pos.x, pos.y + 0.04, pos.z), yaw, visHw * 2, 0.04, len, 0, 0.6, 0x003a4a);
+            sb.addBox(0x00a8d8, new Vec3(pos.x, pos.y + 0.04, pos.z), yaw, visHw * 2, 0.04, len, 0, 0.45, 0x005070); // round 8: vivid cyan (was 0x0090b8, rougher/dimmer)
             for (const eside of [-1, 1]) {
                 sb.addBox(0x0a3a44,
                     new Vec3(pos.x + f.right.x * eside * (visHw - 0.09), pos.y + 0.06, pos.z + f.right.z * eside * (visHw - 0.09)),
