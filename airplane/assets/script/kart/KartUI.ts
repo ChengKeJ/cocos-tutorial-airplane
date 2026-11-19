@@ -535,6 +535,15 @@ export class KartUI extends Component {
 
     public showHud(show: boolean) {
         if (this._hudRoot) { this._hudRoot.active = show; }
+        // Fix140: the DRIFT button is a canvas child (not under the HUD
+        // root) so it stays touchable during the countdown — the perfect
+        // start (hold DRIFT at GO) is otherwise impossible on touch, and
+        // the menu guide teaches exactly that move. startRace() hides the
+        // HUD while state is already 'countdown', so the button stays
+        // live then; it hides in menu/finished like the rest of the HUD.
+        if (this._driftBtnNode) {
+            this._driftBtnNode.active = show || (this._game !== null && this._game.state === 'countdown');
+        }
     }
 
     public showCountdown(text: string) {
@@ -1118,7 +1127,12 @@ export class KartUI extends Component {
             WHITE, () => { if (this._game) { this._game.togglePause(); } }, INK);
 
         // drift + item buttons (right side, hold / tap)
-        const driftBtn = this._makeRoundButton(hud, 'driftBtn', 250, -400, 62, '漂移', 34,
+        // Fix140: the DRIFT button is parented to the canvas, NOT the HUD
+        // root — showHud(false) during the countdown must not deactivate
+        // it, or the touch perfect start is unreachable (no node receives
+        // the hold). Position is unchanged: the HUD root sits at the
+        // canvas origin, so (250, -400) is the same screen spot.
+        const driftBtn = this._makeRoundButton(this._canvas, 'driftBtn', 250, -400, 62, '漂移', 34,
             SKY,
             (e: EventTouch) => { this._driftId = e.touch ? e.touch.getID() : 0; },
             () => { this._driftId = -1; });
