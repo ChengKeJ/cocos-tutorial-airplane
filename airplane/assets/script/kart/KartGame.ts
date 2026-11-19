@@ -47,6 +47,17 @@ const CAM_BACK = 7.5; // metres behind the kart (was 11)
 const CAM_UP = 2.9; // metres above the road (was 4.2)
 const CAM_LOOK = 4.5; // metres ahead to look at (was 6)
 const CAM_LOOK_Y = 0.9;
+// fix139: chase cam at speed — the old follow lagged ~v/6 = 5 m behind the
+// 7.5 m nominal distance (first-order ease, rate 6/s), so at 95-110 km/h
+// the effective distance was ~12 m and the kart read ~6% of screen height
+// (driver a blob, visor/gloves/boots invisible — drive139-cam baseline:
+// 141 fast samples, kart 44 px / 6.1% of screen). At top speed the cam now
+// sits closer + lower and follows stiffer, so the effective distance is
+// ~7.1 m and the kart reads ~10% of the screen. Menu / countdown / low
+// speed are unchanged (spdRatio 0 -> base values). FOV kick untouched.
+const CAM_BACK_FAST = 5.0; // metres behind the kart at top speed
+const CAM_UP_FAST = 2.2; // metres above the kart at top speed
+const CAM_FOLLOW_FAST = 14; // position-ease rate at top speed (was 6)
 const FOV_BASE = 62; // was 60
 const FOV_KICK = 14; // + at top speed (was 8)
 const SMOKE_POOL = 56; // AAA: bigger puffs need more heads
@@ -1334,6 +1345,18 @@ export class KartGame extends Component {
         }
     }
 
+    /** Speed-blended chase-cam distance/height (fix139). At rest/menu the
+     * base CAM_BACK / CAM_UP apply; at top speed the closer/lower fast
+     * values. Used by both the snap and the per-frame follow so they can
+     * never disagree. */
+    private _camBackUp(): { back: number; up: number } {
+        const spd = this._player ? Math.min(1, Math.max(0, this._player.speed / KartConstants.BASE_TOP_SPEED)) : 0;
+        return {
+            back: CAM_BACK - spd * (CAM_BACK - CAM_BACK_FAST),
+            up: CAM_UP - spd * (CAM_UP - CAM_UP_FAST),
+        };
+    }
+
     private _snapCameraToPlayer() {
         if (!this._camera || !this._player) { return; }
         const s = this._track.wrapS(this._player.sTotal);
@@ -1341,7 +1364,8 @@ export class KartGame extends Component {
         this._track.posAt(s, this._player.d, this._tmpPos);
         const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
         const fx = Math.sin(yaw), fz = Math.cos(yaw);
-        this._camPos.set(this._tmpPos.x - fx * CAM_BACK, this._tmpPos.y + CAM_UP, this._tmpPos.z - fz * CAM_BACK);
+        const { back, up } = this._camBackUp();
+        this._camPos.set(this._tmpPos.x - fx * back, this._tmpPos.y + up, this._tmpPos.z - fz * back);
         this._camLook.set(this._tmpPos.x + fx * CAM_LOOK, this._tmpPos.y + CAM_LOOK_Y, this._tmpPos.z + fz * CAM_LOOK);
         this._camera.setPosition(this._camPos);
         this._camera.lookAt(this._camLook, new Vec3(0, 1, 0));
@@ -1355,10 +1379,15 @@ export class KartGame extends Component {
         this._track.posAt(s, this._player.d, this._tmpPos);
         const yaw = Math.atan2(frame.tangent.x, frame.tangent.z) - this._player.heading * 0.5;
         const fx = Math.sin(yaw), fz = Math.cos(yaw);
+        // fix139: speed-blended distance/height/follow-rate (see constants).
+        // spdRatio is shared with the FOV block below.
+        const spdRatio = Math.min(1, Math.max(0, this._player.speed / KartConstants.BASE_TOP_SPEED));
+        const { back, up } = this._camBackUp();
+        const followRate = 6 + spdRatio * (CAM_FOLLOW_FAST - 6);
         const sway = menu ? Math.sin(this._menuT * 0.15) * 6 : 0;
-        const tx = this._tmpPos.x - fx * CAM_BACK + sway;
-        const ty = this._tmpPos.y + CAM_UP;
-        const tz = this._tmpPos.z - fz * CAM_BACK;
+        const tx = this._tmpPos.x - fx * back + sway;
+        const ty = this._tmpPos.y + up;
+        const tz = this._tmpPos.z - fz * back;
         const lx = this._tmpPos.x + fx * CAM_LOOK;
         const ly = this._tmpPos.y + CAM_LOOK_Y;
         const lz = this._tmpPos.z + fz * CAM_LOOK;
@@ -1367,7 +1396,7 @@ export class KartGame extends Component {
             this._camLook.set(lx, ly, lz);
             this._camInit = true;
         } else {
-            const kp = 1 - Math.exp(-6 * dt);
+            const kp = 1 - Math.exp(-followRate * dt);
             const kl = 1 - Math.exp(-10 * dt);
             this._camPos.x += (tx - this._camPos.x) * kp;
             this._camPos.y += (ty - this._camPos.y) * kp;
@@ -1386,7 +1415,6 @@ export class KartGame extends Component {
         this._camera.setPosition(this._camPos);
         this._camera.lookAt(this._camLook, new Vec3(0, 1, 0));
         if (this._cameraComp) {
-            const spdRatio = Math.min(1, Math.max(0, this._player.speed / KartConstants.BASE_TOP_SPEED));
             // step 4: boost FOV kick rides on top of the speed FOV and decays
             if (this._fovKick > 0) { this._fovKick = Math.max(0, this._fovKick - dt * 14); }
             (this._cameraComp as any).fov = FOV_BASE + spdRatio * FOV_KICK + this._fovKick;
