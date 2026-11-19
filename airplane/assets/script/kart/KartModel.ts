@@ -1,5 +1,5 @@
 /**
- * Kart model for the hall kart game （飞车狂飙） — round-7 PopKart rebuild.
+ * Kart model for the hall kart game （飞车狂飙） — round-8 PopKart rebuild.
  *
  * The 8 karts are built procedurally from primitives in ONE coherent
  * style language (see buildPopKartBody): a chunky low wide tub, big
@@ -14,6 +14,15 @@
  * spin / collision footprint are unchanged. Paints recolour the body:
  * buildKartModel takes the selected PaintScheme and every paint part
  * uses it, exactly like the baked bodies did.
+ *
+ * Round 8 driver (2026-11-19): kejun played v1.0.12 and the round-7
+ * driver — a plain glossy sphere helmet + a small flat visor box —
+ * read as a featureless ball ("角色 怎么就是个圆球啊"). The driver
+ * is now a real PopKart racer (see buildDriver): flattened oval
+ * helmet + wraparound goggle visor in a white frame + peak ridge +
+ * chin bar + rear fin, shoulder bar + collar + harness straps, accent
+ * gloves on the wheel, boots on the floor pan, suit in the kart's own
+ * dark shade. Same seat/steer positions, same pivots, same footprint.
  *
  * Why procedural (round 7, 2026-11-19): the previous karts were 8
  * different baked low-poly models from different sources (Poly Pizza /
@@ -493,49 +502,102 @@ function shadowMesh(radius: number): any {
     return m;
 }
 
-// ---- procedural driver (all 8 karts; round 7) ----
-// Big glossy helmet in the kart accent colour (white when the accent
-// is too dark to read — karts 2/3 and dark paint schemes), dark slate
-// suit, arms down to the steering wheel. Round 7: the suit is dark
-// slate again (0x35383f) — the fix134 medium slate (0x6b7280) read as
-// a grey blob against the bright PopKart bodies in the Python renders,
-// and the seat back is now body-coloured, so the dark torso pops
-// against it instead of merging. The helmet is bigger than the torso
-// (r 0.17 vs 0.12) — the cute PopKart proportion. The steering wheel
-// is a full torus tilted 30 deg from vertical, on a short column.
-function buildDriver(body: Node, seat: number[], steer: number[], accent: number): void {
+// ---- round-8 PopKart racer geometry (node-testable constants) ----
+// The round-7 driver was a plain glossy sphere (r 0.17) + a small flat
+// visor box — from the front and the chase cam it read as a featureless
+// ball ("角色 怎么就是个圆球啊"). Round 8 gives the driver real racer
+// shape: the helmet is a flattened oval (scale y 0.88) with a
+// wraparound goggle visor (a curved bubble, not a flat box) in a white
+// frame, a centre peak/ridge, a chin bar and a rear fin — so the
+// silhouette reads as a helmet from every angle, including behind
+// (the chase cam, which the player sees most). The suit is the kart's
+// own dark shade (per-kart identity, and it contrasts with the
+// paint-colour seat back); gloves are the accent colour, gripping the
+// wheel; a shoulder bar + collar ring + harness straps give the torso
+// shape; boots sit on the floor pan ahead of the seat.
+export const DRIVER_HELMET = { r: 0.17, scaleX: 1.0, scaleY: 0.88, scaleZ: 1.05 };
+export const DRIVER_VISOR = { r: 0.175, scaleX: 1.06, scaleY: 0.55, scaleZ: 0.36 };
+export const DRIVER_VISOR_FRAME = { r: 0.185, scaleX: 1.10, scaleY: 0.62, scaleZ: 0.30 };
+export const DRIVER_FIN = { w: 0.03, h: 0.10, d: 0.12 };
+export const DRIVER_PEAK = { w: 0.06, h: 0.03, d: 0.20 };
+export const DRIVER_CHIN = { w: 0.16, h: 0.07, d: 0.08 };
+
+/** Driver suit colour: the kart's own dark shade (stats.dark / the
+ * paint's dark). Darker than the paint-colour seat back, so the driver
+ * pops against it instead of merging; distinct per kart. */
+export function driverSuitColor(dark: number): number {
+    return dark;
+}
+
+// ---- procedural driver (all 8 karts; round 8) ----
+// A PopKart-style racer, not a ball: flattened oval helmet + wraparound
+// goggle visor in a white frame + peak ridge + chin bar + rear fin,
+// shoulder bar + collar + harness straps over a suit-coloured torso,
+// accent gloves ON the wheel rim, boots on the floor pan. Seat
+// (0, 0.36, -0.25) and steer (0, 0.46, 0.18) are unchanged from
+// round 7, so pivots and the collision footprint are untouched.
+function buildDriver(body: Node, seat: number[], steer: number[], accent: number, suitHex: number): void {
     const sx = seat[0], sy = seat[1], sz = seat[2];
     const tx = steer[0], ty = steer[1], tz = steer[2];
-    const suitHex = 0x35383f;
-    const suitMat = MeshBuilder.unlitMaterial(suitHex);
-    // torso + gloves: one merged unlit mesh (the suit reads flat; the
-    // glossy part is the helmet, built separately). The visor is a
-    // separate dark node (it must contrast with the helmet, not the suit).
-    const db = new MeshBuilder();
-    db.addCylinder(suitHex, new Vec3(sx, sy + 0.15, sz), 0, 0.12, 0.14, 0.24); // torso
-    db.addSphere(suitHex, new Vec3(tx - 0.12, ty, tz), 0, 0.05, 0.05, 0.05); // glove L
-    db.addSphere(suitHex, new Vec3(tx + 0.12, ty, tz), 0, 0.05, 0.05, 0.05); // glove R
-    db.build(body);
-    // glossy helmet in the kart accent colour
     const helmetHex = driverColor(accent);
-    const helmPrim = primitives.sphere(0.17, { segments: 12 });
-    const helmMesh = utils.MeshUtils.createMesh({
-        positions: helmPrim.positions, normals: helmPrim.normals,
-        uvs: helmPrim.uvs, indices: helmPrim.indices,
-        minPos: new Vec3(-0.17, -0.17, -0.17),
-        maxPos: new Vec3(0.17, 0.17, 0.17),
-    });
-    const helm = addMeshNode(body, 'helmet', helmMesh, standardMaterial(helmetHex, 0.15, 0.08));
-    helm.setPosition(sx, sy + 0.42, sz + 0.02);
-    // dark visor: a flat box on the helmet's front face, just proud of
-    // the sphere at the centre (front face z +0.195 vs sphere +0.19)
+    const accentHex = helmetHex;
+    const darkHex = 0x1a1d24;
+    // Merged unlit suit parts (one node per colour bucket): torso,
+    // shoulder bar, collar ring, harness straps, accent gloves, boots.
+    const db = new MeshBuilder();
+    db.addCylinder(suitHex, new Vec3(sx, sy + 0.14, sz), 0, 0.13, 0.15, 0.26); // torso
+    db.addSphere(suitHex, new Vec3(sx, sy + 0.24, sz), 0, 0.20, 0.09, 0.12); // shoulders
+    db.addPrimitive(accentHex,
+        primitives.torus(0.105, 0.028, { radialSegments: 10, tubularSegments: 12 }),
+        new Vec3(sx, sy + 0.295, sz), 0, new Vec3(1, 1, 1)); // collar ring
+    for (const side of [-1, 1]) {
+        // harness straps down the chest (front face of the torso)
+        db.addBox(accentHex, new Vec3(sx + side * 0.07, sy + 0.16, sz + 0.135), 0, 0.05, 0.24, 0.02);
+        // accent gloves gripping the wheel rim
+        db.addSphere(accentHex, new Vec3(tx + side * 0.12, ty, tz), 0, 0.06, 0.06, 0.06);
+        // boots on the floor pan, ahead of the seat, under the hood edge
+        db.addBox(darkHex, new Vec3(sx + side * 0.10, sy - 0.08, sz + 0.53), 0, 0.09, 0.06, 0.18);
+    }
+    db.build(body);
+    const darkMat = standardMaterial(darkHex, 0.15, 0.35);
+    // Glossy helmet: flattened oval (NOT a sphere), in the kart accent
+    // colour, with a wraparound goggle visor. The visor glass is a
+    // flattened sphere bulging through a slightly larger white frame
+    // sphere — the frame peeks out around the glass on all sides
+    // (white goggle rim) while the glass front stays proud of it.
+    const helmMat = standardMaterial(helmetHex, 0.15, 0.08);
+    primNode(body, 'helmet',
+        primitives.sphere(DRIVER_HELMET.r, { segments: 12 }),
+        helmMat, sx, sy + 0.42, sz + 0.02, 0, 0, 0,
+        DRIVER_HELMET.scaleX, DRIVER_HELMET.scaleY, DRIVER_HELMET.scaleZ);
+    primNode(body, 'visor_frame',
+        primitives.sphere(DRIVER_VISOR_FRAME.r, { segments: 12 }),
+        MeshBuilder.unlitMaterial(0xf5f5f5), sx, sy + 0.42, sz + 0.145, 0, 0, 0,
+        DRIVER_VISOR_FRAME.scaleX, DRIVER_VISOR_FRAME.scaleY, DRIVER_VISOR_FRAME.scaleZ);
     primNode(body, 'visor',
-        primitives.box({ width: 0.20, height: 0.09, length: 0.04 }),
-        MeshBuilder.unlitMaterial(0x1a1d24), sx, sy + 0.42, sz + 0.175);
+        primitives.sphere(DRIVER_VISOR.r, { segments: 12 }),
+        standardMaterial(0x0d0f14, 0.30, 0.05), sx, sy + 0.42, sz + 0.15, 0, 0, 0,
+        DRIVER_VISOR.scaleX, DRIVER_VISOR.scaleY, DRIVER_VISOR.scaleZ);
+    // centre peak ridge along the crown, chin bar under the visor, and
+    // a rear fin — the three details that kill the ball silhouette
+    // (the fin is what the chase cam sees from behind). Peak + fin are
+    // dark, not helmet-coloured: on a white helmet (karts 0/2/3) a
+    // white fin is invisible, and the dark ridge reads as the helmet's
+    // centre stripe on every colour. The fin leans back 30 deg (a
+    // spoiler, not a brick); the peak is short (0.20) so it never reads
+    // as a plank from the side.
+    primNode(body, 'helmet_peak',
+        primitives.box({ width: DRIVER_PEAK.w, height: DRIVER_PEAK.h, length: DRIVER_PEAK.d }),
+        darkMat, sx, sy + 0.555, sz + 0.02);
+    primNode(body, 'helmet_chin',
+        primitives.box({ width: DRIVER_CHIN.w, height: DRIVER_CHIN.h, length: DRIVER_CHIN.d }),
+        helmMat, sx, sy + 0.305, sz + 0.16);
+    primNode(body, 'helmet_fin',
+        primitives.box({ width: DRIVER_FIN.w, height: DRIVER_FIN.h, length: DRIVER_FIN.d }),
+        darkMat, sx, sy + 0.50, sz - 0.17, -30, 0, 0);
     // steering wheel: full torus tilted 30 deg from vertical + column
     // down to the tub (column top meets the wheel hub, bottom embeds
     // in the cockpit tub)
-    const darkMat = standardMaterial(0x1a1d24, 0.15, 0.35);
     primNode(body, 'steer_wheel',
         primitives.torus(0.11, 0.018, { radialSegments: 12, tubularSegments: 12 }),
         darkMat, tx, ty, tz, 60, 0, 0);
@@ -544,6 +606,7 @@ function buildDriver(body: Node, seat: number[], steer: number[], accent: number
         darkMat, 0, 0.41, 0.13, 45, 0, 0);
     // arms: thin cylinders aimed shoulder -> glove (Euler YXZ: pitch =
     // acos(dy/len), yaw = atan2(dx, dz); see Quat.fromEuler order)
+    const suitMat = standardMaterial(suitHex, 0.15, 0.30);
     for (const side of [-1, 1]) {
         const gx = tx + side * 0.12;
         const shx = sx + side * 0.14, shy = sy + 0.30, shz = sz;
@@ -675,9 +738,12 @@ function buildPopKartBody(body: Node, ki: number, colour: number, accent: number
     for (const side of [-1, 1]) {
         box('body_paint_quarter', paint, side * 0.50, 0.32, -0.92, 0.14, 0.14, 0.28);
     }
-    // seat + backrest in the body colour, so the dark driver pops
+    // seat + backrest in the body colour, so the dark driver pops.
+    // Round 8: the backrest is narrower (0.34) and lower (top ~0.63)
+    // than the round-7 slab (0.42) — the driver's shoulders show on
+    // both sides of it from the chase cam instead of being hidden.
     box('body_paint_seat', paint, 0, 0.36, -0.28, 0.42, 0.10, 0.30);
-    box('body_paint_seatback', paint, 0, 0.50, -0.44, 0.42, 0.34, 0.08, -12);
+    box('body_paint_seatback', paint, 0, 0.48, -0.44, 0.34, 0.30, 0.08, -12);
     // spoiler by style
     if (style.spoiler === 'low' || style.spoiler === 'tall' || style.spoiler === 'wide') {
         const wingY = style.spoiler === 'tall' ? 0.82 : 0.64;
@@ -730,8 +796,9 @@ export function buildKartModel(stats: DriverStats, paint?: PaintScheme | null): 
     // round-7 procedural PopKart body (no baked meshes any more)
     buildPopKartBody(body, ki, colour, accent);
 
-    // driver (all 8 karts; the old baked built-in driver for kart 2 is gone)
-    buildDriver(body, POPKART_SEAT, POPKART_STEER, accent);
+    // driver (all 8 karts; round 8 PopKart racer — suit is the kart's
+    // dark shade, per-kart identity)
+    buildDriver(body, POPKART_SEAT, POPKART_STEER, accent, paint ? paint.dark : stats.dark);
 
     // soft blob shadow: smaller + lighter than the old 1.25/0.85 discs,
     // which read as a huge oil slick on the road
