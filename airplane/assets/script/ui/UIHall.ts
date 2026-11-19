@@ -21,12 +21,15 @@ const { ccclass, property } = _decorator;
  * Best score is read from the same localStorage key the plane game
  * writes ('starfighter_best', see GameManager.BEST_KEY).
  *
- * VISUAL REWORK (hall AAA, v1.0.10): the whole look is built in code
- * below — original vector art only (Graphics shapes + Labels, no
+ * VISUAL REWORK (hall round 8, v1.0.12): the whole look is built in
+ * code below — original vector art only (Graphics shapes + Labels, no
  * copied assets, no new textures). One art direction with the kart
- * rework: cute chunky low-poly + glossy candy colours on a deep
- * arcade night sky. Function is unchanged: same two entries, same
- * scene names, same version string, same best-score key.
+ * rework: bright PopKart day sky (light blue -> warm cream), white
+ * clouds, chunky sun, white candy cards with thick white outlines,
+ * red hero title with a white sticker shadow. The old deep night sky
+ * is gone — no screen is left in the dark style. Function is
+ * unchanged: same two entries, same scene names, same version string,
+ * same best-score key.
  */
 
 const BEST_KEY = 'starfighter_best';
@@ -185,7 +188,7 @@ export class UIHall extends Component {
         this._buildBestPill(hall);
         this._buildToastBg(hall);
         if (this.versionLabel) {
-            this.versionLabel.color = col(126, 136, 168, 255);
+            this.versionLabel.color = col(100, 116, 139, 255);
         }
     }
 
@@ -243,52 +246,51 @@ export class UIHall extends Component {
         g.fill();
     }
 
-    // -- backdrop: night-sky gradient bands, neon horizon, star field --
+    // -- backdrop: bright day-sky gradient bands, sun, clouds --
 
     private _buildBackdrop (hall: Node) {
         const first = hall.children.length > 0 ? hall.children[0] : null;
-        // Vertical gradient, painted as stacked bands (Graphics has no gradients).
+        // Bright PopKart day sky: light blue at the top warming to a
+        // pale cream horizon (Graphics has no gradients — stacked bands).
         const g = this._gfxNode(hall, 'bgGradient', 0, 0, DESIGN_W, DESIGN_H, first);
         const bands: Array<[number, number, Color]> = [
-            [320, 640, col(28, 23, 71, 255)],
-            [0, 320, col(21, 26, 62, 255)],
-            [-320, 0, col(16, 23, 54, 255)],
-            [-640, -320, col(11, 16, 48, 255)],
+            [320, 640, col(125, 211, 252, 255)],
+            [0, 320, col(186, 230, 253, 255)],
+            [-320, 0, col(254, 243, 199, 255)],
+            [-640, -320, col(255, 247, 237, 255)],
         ];
         for (const [y0, y1, c] of bands) {
             g.fillColor = c;
             g.rect(-DESIGN_W / 2, y0, DESIGN_W, y1 - y0);
             g.fill();
         }
-        // Neon horizon glow behind the cards: warm sunset bands, low alpha.
-        const glow = this._gfxNode(hall, 'bgGlow', 0, 0, DESIGN_W, DESIGN_H, first);
-        const glowBands: Array<[number, number, Color]> = [
-            [60, 160, col(255, 122, 69, 30)],
-            [-40, 60, col(255, 90, 122, 26)],
-            [-140, -40, col(122, 77, 255, 24)],
-        ];
-        for (const [y0, y1, c] of glowBands) {
-            glow.fillColor = c;
-            glow.rect(-DESIGN_W / 2, y0, DESIGN_W, y1 - y0);
-            glow.fill();
+        // Chunky sun (top-right) with ray diamonds.
+        const sun = this._gfxNode(hall, 'bgSun', 255, 510, 160, 160, first);
+        sun.fillColor = col(255, 196, 0, 255);
+        sun.circle(0, 0, 44);
+        sun.fill();
+        for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2;
+            this._diamond(sun, Math.cos(a) * 62, Math.sin(a) * 62, 10, col(255, 196, 0, 255));
         }
-        // Star field: chunky diamonds, upper two-thirds of the screen.
+        // White clouds: rounded blobs in the clear bands (above the
+        // title, below the cards) — deterministic placement, same seed
+        // every launch. They sit behind the cards (created first).
         const rnd = mulberry32(1337);
-        const starCols = [col(255, 255, 255, 255), col(255, 215, 94, 255), col(143, 227, 255, 255)];
-        for (let i = 0; i < 34; i++) {
-            const x = -330 + rnd() * 660;
-            const y = -60 + rnd() * 680;
-            const s = 3 + rnd() * 6;
-            const node = new Node('star' + i);
-            node.layer = Layers.Enum.UI_2D;
-            node.setParent(hall);
-            node.setPosition(x, y, 0);
-            const t = node.addComponent(UITransform);
-            t.setContentSize(s * 2 + 2, s * 2 + 2);
-            const sg = node.addComponent(Graphics);
-            this._diamond(sg, 0, 0, s, starCols[i % starCols.length]);
-            node.setSiblingIndex(2);
-            this._stars.push({ node: node, phase: rnd() * Math.PI * 2, base: 1 });
+        const cloudSpots: Array<[number, number, number]> = [
+            [-250, 570, 1], [140, 600, 0.8], [-280, -480, 0.9], [250, -540, 0.7],
+        ];
+        for (let i = 0; i < cloudSpots.length; i++) {
+            const [cx, cy, s] = cloudSpots[i];
+            const x = cx + (rnd() - 0.5) * 30;
+            const cg = this._gfxNode(hall, 'cloud' + i, x, cy, 200, 80, first);
+            cg.fillColor = col(255, 255, 255, 235);
+            cg.ellipse(-30 * s, 0, 34 * s, 20 * s);
+            cg.fill();
+            cg.ellipse(10 * s, 6 * s, 36 * s, 22 * s);
+            cg.fill();
+            cg.ellipse(40 * s, -2 * s, 28 * s, 18 * s);
+            cg.fill();
         }
     }
 
@@ -297,16 +299,18 @@ export class UIHall extends Component {
     private _buildTitleBlock (hall: Node) {
         const title = hall.getChildByName('title');
         const subtitle = hall.getChildByName('subtitle');
-        this._label(hall, 'eyebrow', 0, 508, 22, col(127, 227, 255, 255), '★ GAME HALL ★', true);
+        // Round 8: orange eyebrow + chunky RED title with a WHITE
+        // sticker shadow (gold on a light sky is unreadable).
+        this._label(hall, 'eyebrow', 0, 508, 22, col(255, 122, 26, 255), '★ GAME HALL ★', true);
         if (title) {
-            // Chunky drop shadow: same text, dark, offset down-right behind.
-            const shadow = this._label(hall, 'titleShadow', 4, 422, 66, col(26, 10, 52, 255), '星空游戏厅', true);
+            // Chunky drop shadow: same text, white, offset down-right behind.
+            const shadow = this._label(hall, 'titleShadow', 4, 422, 66, col(255, 255, 255, 255), '星空游戏厅', true);
             shadow.node.setSiblingIndex(hall.children.indexOf(title));
             title.setPosition(0, 430, 0);
             const tl = title.getComponent(Label);
             if (tl) {
                 tl.fontSize = 66;
-                tl.color = col(255, 196, 0, 255);
+                tl.color = col(255, 59, 92, 255);
                 (tl as any).isBold = true;
             }
             const tt = title.getComponent(UITransform);
@@ -314,16 +318,16 @@ export class UIHall extends Component {
                 tt.setContentSize(560, 100);
             }
         }
-        // Gold marquee underline with a diamond at each end.
+        // Gold marquee underline with a red diamond at each end.
         const ug = this._gfxNode(hall, 'titleUnderline', 0, 372, 460, 16, subtitle);
         this._roundRect(ug, -210, -5, 420, 10, 5, col(255, 196, 0, 255));
-        this._diamond(ug, -232, 0, 9, col(255, 196, 0, 255));
-        this._diamond(ug, 232, 0, 9, col(255, 196, 0, 255));
+        this._diamond(ug, -232, 0, 9, col(255, 59, 92, 255));
+        this._diamond(ug, 232, 0, 9, col(255, 59, 92, 255));
         if (subtitle) {
             subtitle.setPosition(0, 322, 0);
             const sl = subtitle.getComponent(Label);
             if (sl) {
-                sl.color = col(199, 210, 255, 255);
+                sl.color = col(71, 85, 105, 255);
             }
         }
     }
@@ -331,9 +335,11 @@ export class UIHall extends Component {
     // -- showcase cards: shadow + neon frame + glossy face + icon + CTA pill --
 
     private _buildCard (btn: Node, hall: Node, isPlane: boolean) {
-        const face = isPlane ? col(43, 127, 255, 255) : col(255, 90, 38, 255);
-        const frame = isPlane ? col(156, 208, 255, 255) : col(255, 196, 107, 255);
-        const subColor = isPlane ? col(220, 234, 255, 255) : col(255, 227, 214, 255);
+        // Round 8: brighter candy faces, thick WHITE frames (the old
+        // neon frames vanished on the bright sky), soft grey shadow.
+        const face = isPlane ? col(46, 168, 255, 255) : col(255, 92, 61, 255);
+        const frame = col(255, 255, 255, 255);
+        const subColor = col(255, 255, 255, 255);
         const y = isPlane ? 168 : -112;
         const W = 580;
         const H = 224;
@@ -348,14 +354,14 @@ export class UIHall extends Component {
         if (spr) {
             spr.color = face;
         }
-        // Drop shadow + neon frame, both behind the button in the hall.
+        // Drop shadow + white frame, both behind the button in the hall.
         const sh = this._gfxNode(hall, isPlane ? 'planeShadow' : 'kartShadow',
             0, y - 12, W, H, btn);
-        this._roundRect(sh, -W / 2, -H / 2, W, H, 30, col(4, 6, 24, 150));
+        this._roundRect(sh, -W / 2, -H / 2, W, H, 30, col(0, 0, 0, 80));
         const fr = this._gfxNode(hall, isPlane ? 'planeFrame' : 'kartFrame',
             0, y, W + 16, H + 16, btn);
         fr.strokeColor = frame;
-        fr.lineWidth = 5;
+        fr.lineWidth = 6;
         fr.roundRect(-(W + 16) / 2, -(H + 16) / 2, W + 16, H + 16, 34);
         fr.stroke();
         // Rounded glossy face on top of the plain Sprite.
@@ -364,7 +370,7 @@ export class UIHall extends Component {
         faceG.node.setSiblingIndex(0);
         // Top gloss strip (white, translucent) — shine on the candy face.
         const gloss = this._gfxNode(btn, 'cardGloss', 0, 62, W - 24, 64, null);
-        this._roundRect(gloss, -(W - 24) / 2, -32, W - 24, 64, 22, col(255, 255, 255, 46));
+        this._roundRect(gloss, -(W - 24) / 2, -32, W - 24, 64, 22, col(255, 255, 255, 90));
         gloss.node.setSiblingIndex(1);
         // Chunky pictogram (original vector art, left side of the card).
         const icon = new Node(isPlane ? 'planeIcon' : 'kartIcon');
@@ -523,11 +529,12 @@ export class UIHall extends Component {
         this.bestLabel.node.setPosition(0, -292, 0);
         const bl = this.bestLabel;
         bl.fontSize = 32;
-        bl.color = col(255, 196, 0, 255);
+        // Round 8: white candy pill, orange text (gold is unreadable on white).
+        bl.color = col(255, 122, 26, 255);
         (bl as any).isBold = true;
         const bg = this._gfxNode(hall, 'bestBg', 0, -292, 460, 60, this.bestLabel.node);
-        this._roundRect(bg, -230, -30, 460, 60, 30, col(8, 12, 36, 200));
-        bg.strokeColor = col(255, 196, 0, 110);
+        this._roundRect(bg, -230, -30, 460, 60, 30, col(255, 255, 255, 235));
+        bg.strokeColor = col(203, 213, 225, 255);
         bg.lineWidth = 2;
         bg.roundRect(-230, -30, 460, 60, 30);
         bg.stroke();
@@ -538,9 +545,12 @@ export class UIHall extends Component {
             return;
         }
         this.toastLabel.node.setPosition(0, -380, 0);
+        // Round 8: white candy pill — and the scene's toast label is
+        // white, so retint it dark or the text vanishes on the pill.
+        this.toastLabel.color = col(26, 29, 36, 255);
         const bg = this._gfxNode(hall, 'toastBg', 0, -380, 560, 56, this.toastLabel.node);
-        this._roundRect(bg, -280, -28, 560, 56, 28, col(8, 12, 36, 220));
-        bg.strokeColor = col(255, 255, 255, 90);
+        this._roundRect(bg, -280, -28, 560, 56, 28, col(255, 255, 255, 235));
+        bg.strokeColor = col(203, 213, 225, 255);
         bg.lineWidth = 2;
         bg.roundRect(-280, -28, 560, 56, 28);
         bg.stroke();
