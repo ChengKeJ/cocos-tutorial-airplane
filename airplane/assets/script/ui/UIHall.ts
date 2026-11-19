@@ -11,7 +11,7 @@ const { ccclass, property } = _decorator;
  * URL = db://assets/script/ui/UIHall.ts
  * ManualUrl = https://docs.cocos.com/creator/3.3/manual/en/
  *
- * Hall / menu scene for the Star Fighter game hall (v1.0.12).
+ * Hall / menu scene for the Star Fighter game hall (v1.0.13).
  * The hall is the entry scene: it shows the game list and the plane
  * game's best score, and routes into the games. The plane game keeps
  * its own in-scene menu (UIMain "滑动开始游戏"); the hall only loads
@@ -39,7 +39,7 @@ const BEST_KEY = 'starfighter_best';
 // scene's is 'kart' (both are listed in build-configs/wechatgame.json).
 const PLANE_SCENE_NAME = 'airplane';
 const KART_SCENE_NAME = 'kart';
-const HALL_VERSION = 'v1.0.12';
+const HALL_VERSION = 'v1.0.13';
 
 /** Design space of the hall scene (Canvas 720x1280, centre origin). */
 const DESIGN_W = 720;
