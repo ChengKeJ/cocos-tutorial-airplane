@@ -248,6 +248,30 @@ export const PAINTS: PaintScheme[][] = [
     ],
 ];
 
+/** Parse an audio on/off store ('1' = on, '0' = off). Missing /
+ * garbage defaults to ON — a fresh install is loud, and a corrupt
+ * value never silently mutes the game. Pure function (node-testable). */
+export function parseAudioOn(raw: string | null): boolean {
+    if (raw === null || raw === undefined) { return true; }
+    return raw !== '0' && raw !== 'false' && raw !== 'off';
+}
+
+/** Stat 1..5 as a 0..1 bar fill (5 = full). Pure function. */
+export function statBarFill(stat: number): number {
+    const s = Math.max(1, Math.min(5, Math.floor(stat) || 1));
+    return s / 5;
+}
+
+/** Drift charge tier from held seconds — the same thresholds the
+ * physics uses (DRIFT_TIERS): 0 = not charged yet, 1/2/3 = the
+ * mini-turbo tiers. Pure function (node-testable). */
+export function driftTierFor(t: number): number {
+    if (t >= KartConstants.DRIFT_TIERS[2]) { return 3; }
+    if (t >= KartConstants.DRIFT_TIERS[1]) { return 2; }
+    if (t >= KartConstants.DRIFT_TIERS[0]) { return 1; }
+    return 0;
+}
+
 /** Coins earned for finishing `pos` (1..8), plus the new-best bonus
  * when `isNewBest`. Pure function (node-testable). */
 export function rewardForFinish(pos: number, isNewBest: boolean): number {
