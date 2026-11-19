@@ -15,7 +15,7 @@
  */
 
 import { _decorator, AudioClip, AudioSource, Camera, Color, Component, DirectionalLight, isValid, Layers, ModelComponent, Node, Quat, Vec3, director, find, primitives, sys, utils } from 'cc';
-import { ItemKind, KartConstants, PAINTS, PaintScheme, ROSTER, paintTapResult, parseOwnedPaints, parseSelectedPaints, rewardForFinish, rosterOrder } from './KartConstants';
+import { ItemKind, KartConstants, PAINTS, PaintScheme, ROSTER, driftTierFor, paintTapResult, parseAudioOn, parseOwnedPaints, parseSelectedPaints, rewardForFinish, rosterOrder } from './KartConstants';
 import { KartTrack, MeshBuilder, TrackFrame, trackDefById } from './KartTrack';
 import { buildKartModel, KartModel } from './KartModel';
 import { ensureStdEffect } from './KartMaterials';
@@ -35,6 +35,8 @@ const RACES_KEY = 'kart_races'; // total races finished
 const WINS_KEY = 'kart_wins'; // total P1 finishes
 const PAINTS_KEY = 'kart_paints'; // JSON: 8 rows of [bool x3] owned paints
 const SELECTED_PAINTS_KEY = 'kart_paint_selected'; // JSON: 8 ints 0..2
+const MUSIC_KEY = 'kart_music_on'; // '1' = music on, '0' = off (round 8 settings)
+const SFX_KEY = 'kart_sfx_on'; // '1' = sfx on, '0' = off (round 8 settings)
 const KART_VERSION = 'v1.0.12';
 const RAD2DEG = 180 / Math.PI;
 
@@ -194,6 +196,10 @@ export class KartGame extends Component {
     private _engineSrc: AudioSource = null;
     private _sfxSrc: AudioSource = null;
     private _audioStarted = false;
+    // Round 8 settings (persisted, default ON — loaded in start()
+    // before _buildWorld creates the audio sources).
+    private _musicOn = true;
+    private _sfxOn = true;
 
     // ---- public state for the UI ----
     public get raceTime(): number { return this._raceTime; }
@@ -218,6 +224,32 @@ export class KartGame extends Component {
     public get lastReward(): number { return this._lastReward; }
     /** The last finish set a personal best on that track + mode. */
     public get lastNewBest(): boolean { return this._lastNewBest; }
+
+    // ---- Round 8 settings (music / SFX toggles, persisted) ----
+    public get musicOn(): boolean { return this._musicOn; }
+    public get sfxOn(): boolean { return this._sfxOn; }
+    public setMusicOn(on: boolean): void {
+        this._musicOn = !!on;
+        sys.localStorage.setItem(MUSIC_KEY, this._musicOn ? '1' : '0');
+        if (this._bgmSrc) { (this._bgmSrc as any).volume = this._musicOn ? 0.3 : 0; }
+    }
+    public setSfxOn(on: boolean): void {
+        this._sfxOn = !!on;
+        sys.localStorage.setItem(SFX_KEY, this._sfxOn ? '1' : '0');
+    }
+
+    // ---- Round 8 drift HUD (live charge for the drift button) ----
+    /** Player's live drift charge tier (0 = not charged, 1/2/3 = the
+     * mini-turbo tiers) — the HUD recolours the DRIFT button by tier. */
+    public get driftTier(): number {
+        if (!this._player) { return 0; }
+        return driftTierFor(this._player.driftTime);
+    }
+    /** Player's drift charge 0..1 (tier-3 threshold = full). */
+    public get driftCharge(): number {
+        if (!this._player) { return 0; }
+        return Math.min(1, Math.max(0, this._player.driftTime / KartConstants.DRIFT_TIERS[2]));
+    }
 
     /** Owned paints for a kart ([default, alt1, alt2]); default always owned. */
     public paintsOwned(kartIdx: number): boolean[] {
@@ -445,6 +477,10 @@ export class KartGame extends Component {
         this._ownedPaints = parseOwnedPaints(sys.localStorage.getItem(PAINTS_KEY));
         this._selectedPaints = parseSelectedPaints(sys.localStorage.getItem(SELECTED_PAINTS_KEY));
 
+        // Round 8 settings: music / SFX toggles (default ON).
+        this._musicOn = parseAudioOn(sys.localStorage.getItem(MUSIC_KEY));
+        this._sfxOn = parseAudioOn(sys.localStorage.getItem(SFX_KEY));
+
         // fix130 re-run 2: the world (track + karts) is built ONLY after
         // the PBR anchor effect has loaded (or failed — unlit fallback).
         // Building with an unresolved effect half-initialises SubModels
@@ -586,7 +622,7 @@ export class KartGame extends Component {
         this._bgmSrc = this.node.addComponent(AudioSource);
         (this._bgmSrc as any).clip = this.bgmClip;
         (this._bgmSrc as any).loop = true;
-        (this._bgmSrc as any).volume = 0.3;
+        (this._bgmSrc as any).volume = this._musicOn ? 0.3 : 0;
         this._engineSrc = this.node.addComponent(AudioSource);
         (this._engineSrc as any).clip = this.engineClip;
         (this._engineSrc as any).loop = true;
@@ -633,6 +669,15 @@ export class KartGame extends Component {
                 } else {
                     this.state = 'racing';
                     this._raceTime = 0;
+                    // Round 8: perfect start — holding DRIFT as GO fires
+                    // grants a tier-2 mini-turbo (PopKart feel: time the
+                    // start, get the boost). The menu guide teaches it.
+                    if (this.driftHeld && this._player) {
+                        this._player.boostTime = KartConstants.DRIFT_BOOST_TIME[2];
+                        this._player.boostMul = KartConstants.DRIFT_BOOST_STRENGTH[2];
+                        this._boostKick(6, 0.08);
+                        if (this.ui) { this.ui.showToast('🚀 完美起步！'); }
+                    }
                     if (this.ui) { this.ui.showCountdown(''); this.ui.showHud(true); }
                 }
             }
@@ -1076,7 +1121,7 @@ export class KartGame extends Component {
             k.boostTime = KartConstants.PAD_BOOST_TIME;
             k.boostMul = KartConstants.PAD_BOOST_MUL;
             k.padCooldown = 2;
-            if (isPlayer) { this._boostKick(7, 0.10); } // step 4: FOV kick + shake
+            if (isPlayer) { this._boostKick(9, 0.10); } // step 4: FOV kick + shake (round 8: 7 -> 9, pads must feel fast)
         }
     }
 
@@ -1185,7 +1230,7 @@ export class KartGame extends Component {
     // ---- Pass D audio ----
 
     private _playSfx(clip: AudioClip | null): void {
-        if (!clip || !this._sfxSrc) { return; }
+        if (!clip || !this._sfxSrc || !this._sfxOn) { return; }
         (this._sfxSrc as any).playOneShot(clip, 0.9);
     }
 
@@ -1207,7 +1252,7 @@ export class KartGame extends Component {
         if (this.state === 'racing') { vol = 0.22 + ratio * 0.28; }
         else if (this.state === 'countdown') { vol = 0.15; }
         else if (this.state === 'paused') { vol = 0.03; }
-        (this._engineSrc as any).volume = vol;
+        (this._engineSrc as any).volume = this._sfxOn ? vol : 0;
     }
 
     /** Results are up: deactivate every live smoke/spark puff at once
